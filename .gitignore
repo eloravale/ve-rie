@@ -11,3 +11,5 @@ dist-worker
 *.db-shm
 *.db-wal
 *.log
+.freebuff/*
+!.freebuff/project-id
