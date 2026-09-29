@@ -1,0 +1,13 @@
+node_modules
+dist
+dist-worker
+.wrangler
+*.local
+.env
+.env.*
+.DS_Store
+.tmp-clone
+*.db
+*.db-shm
+*.db-wal
+*.log

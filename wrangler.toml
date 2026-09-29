@@ -1,0 +1,17 @@
+name = "veria"
+main = "dist-worker/index.js"
+compatibility_date = "2025-01-01"
+
+[assets]
+directory = "./dist/web"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "veria-db"
+database_id = "PLACEHOLDER_run_npx_wrangler_d1_create_veria-db"
+migrations_dir = "migrations"
+
+[vars]
+VERIA_DEMO_MODE = "true"
