@@ -3,6 +3,7 @@ import { api, ApiError } from "../api"
 import { nav } from "../App"
 import { usd } from "../format"
 import { Loading, ErrorState, Section, SimulatedTag } from "../ui"
+import { SectionIndex } from "../brand"
 
 interface DashboardData {
   revenue_recovered: number
@@ -16,12 +17,13 @@ interface DashboardData {
 
 interface StepState {
   id: string
+  chapter: string
   title: string
   why: string
   action: string
   run: () => Promise<string>
   goTo?: string
-  status: "pending" | "done" | "skipped"
+  status?: "pending" | "done"
   result?: string
   busy?: boolean
 }
@@ -32,6 +34,7 @@ export default function DemoMode() {
   const [error, setError] = useState<string | null>(null)
   const [resetting, setResetting] = useState(false)
   const [steps, setSteps] = useState<StepState[]>([])
+  const [impact, setImpact] = useState<{ recovered_value: number; identified_value: number } | null>(null)
 
   const loadDash = useCallback(async (): Promise<DashboardData> => {
     const d = await api.get<DashboardData>("/api/dashboard")
@@ -39,68 +42,90 @@ export default function DemoMode() {
     return d
   }, [])
 
-  // Build steps fresh each time (they read live data when run)
+  const loadImpact = useCallback(async () => {
+    try {
+      setImpact(await api.get<{ recovered_value: number; identified_value: number }>("/api/impact"))
+    } catch {
+      setImpact(null)
+    }
+  }, [])
+
   const buildSteps = useCallback((): StepState[] => {
     return [
       {
-        id: "missed_call",
-        title: "Recover a missed call",
-        why: "The #1 leak in HVAC: a homeowner calls a competitor because nobody called back. VÉRIA turns the missed call into a tracked lead with an owner call-back task.",
-        action: "Start recovery on the oldest unrecovered missed call",
-        goTo: "/missed-calls",
-        status: "pending",
+        id: "leak",
+        chapter: "1 · LEAK",
+        title: "See where revenue is leaking",
+        why: "Start on the Leakage Radar: missed enquiries, unfollowed quotes, dormant customers — each with value attached. This is the money already inside your records, quietly going cold.",
+        action: "Scan for leaks",
+        goTo: "/found",
         run: async () => {
-          const calls = await api.get<Array<{ id: string; caller_name: string | null; recovered: number; estimated_value: number }>>("/api/missed-calls")
-          const target = (Array.isArray(calls) ? calls : []).find((m) => !m.recovered)
-          if (!target) return "No unrecovered missed calls — reset the demo to replay this step."
-          const res = await api.post<{ lead: { name: string }; task_id: string }>(`/api/missed-calls/${target.id}/recover`)
-          return `Lead + owner call-back task created for ${res.lead.name} — ${usd(target.estimated_value)} back in play.`
+          await api.post("/api/opportunities/sync")
+          const leak = await api.get<{ total: number; total_count: number; categories: { label: string; count: number; value: number }[] }>("/api/leakage")
+          const top = leak.categories.slice(0, 2).map((c) => `${c.label} (${c.count} · ${usd(c.value)})`).join(", ")
+          return `Scan complete: ${leak.total_count} open opportunities worth ${usd(leak.total)} identified. Biggest leaks: ${top}.`
         }
       },
       {
-        id: "estimate_followup",
-        title: "Follow up an idle estimate",
-        why: "Most estimates close on follow-up #2 or #3 — but without a system they simply expire. One click shows the follow-up becoming recovered revenue.",
-        action: "Complete the oldest estimate follow-up as recovered",
-        goTo: "/followups",
-        status: "pending",
+        id: "identify",
+        chapter: "2 · IDENTIFY & PRIORITIZE",
+        title: "Every leak becomes a prioritized opportunity",
+        why: "Each opportunity carries its value, age, WHY it matters, and a recommended next action — ranked so the team works the money first.",
+        action: "Show the pipeline",
+        goTo: "/opportunities",
         run: async () => {
-          const fus = await api.get<Array<{ id: string; kind: string; status: string; estimated_value: number | null; lead_name: string | null }>>("/api/followups?status=all")
-          const target = (Array.isArray(fus) ? fus : []).find((f) => f.status === "pending" && f.kind === "estimate")
-          if (!target) return "No pending estimate follow-ups — reset the demo to replay this step."
-          await api.post(`/api/followups/${target.id}/complete`, { outcome: "recovered" })
-          return `${target.lead_name}'s ${usd(target.estimated_value ?? 0)} estimate marked recovered — revenue counter updated.`
+          const d = await api.get<{ items: Array<{ estimated_value: number; priority: string; stage: string }> }>("/api/opportunities")
+          const open = (d.items ?? []).filter((o) => !["recovered", "lost"].includes(o.stage))
+          const high = open.filter((o) => o.priority === "high")
+          return `${open.length} open opportunities, ${high.length} high-priority. Top of the queue: ${usd(Math.max(0, ...open.map((o) => o.estimated_value)))}.`
         }
       },
       {
-        id: "reactivation",
-        title: "Reactivate a dormant lead",
-        why: "Leads that went quiet 30+ days ago are invisible in a paper workflow. VÉRIA surfaces them with a recommended re-entry offer.",
-        action: "Queue outreach for the highest-value dormant lead",
-        goTo: "/reactivation",
-        status: "pending",
+        id: "quote",
+        chapter: "3 · RECOVER",
+        title: "Quote recovery — follow the money",
+        why: "The most valuable leak in HVAC: a quote you paid to produce, going silent. Watch a follow-up move it through the pipeline.",
+        action: "Advance the top quote opportunity",
+        goTo: "/opportunities",
         run: async () => {
-          const reas = await api.get<Array<{ id: string; status: string; lead_name: string; estimated_value: number }>>("/api/reactivations")
-          const target = (Array.isArray(reas) ? reas : []).find((r) => r.status === "identified")
-          if (!target) return "No dormant leads in the queue — reset the demo to replay this step."
-          await api.post(`/api/reactivations/${target.id}/run`)
-          return `Outreach queued for ${target.lead_name} — ${usd(target.estimated_value)} dormant opportunity back in motion.`
+          const d = await api.get<{ items: Array<{ id: string; source_type: string; stage: string; customer_name: string; estimated_value: number; recommended_action: string }> }>("/api/opportunities")
+          const open = (d.items ?? []).filter((o) => !["recovered", "lost"].includes(o.stage))
+          const use = open.find((o) => o.source_type === "quote") ?? open[0]
+          if (!use) return "No open opportunities — reset the demo to replay this step."
+          const res = await api.patch<{ opportunity: { customer_name: string; stage: string }; counted_as_recovered: boolean }>(
+            `/api/opportunities/${use.id}`,
+            { stage: nextStage(use.stage) }
+          )
+          return `${res.opportunity.customer_name} moved to ${res.opportunity.stage.replace(/_/g, " ")} — ${usd(use.estimated_value)} still in play. Next: ${use.recommended_action}`
         }
       },
       {
-        id: "owner_task",
-        title: "Complete an owner handoff",
-        why: "VÉRIA never pretends to be autonomous: high-stakes moments become owner tasks with value, priority, and a recommended action.",
-        action: "Complete the highest-priority owner task",
+        id: "handoff",
+        chapter: "4 · RECOVER",
+        title: "Human handoff — the owner stays in control",
+        why: "Sensitive, high-value moments become an owner task with value, priority and a recommended action. VÉRIA never sends customer communication autonomously.",
+        action: "Complete an owner handoff",
         goTo: "/tasks",
-        status: "pending",
         run: async () => {
           const tasks = await api.get<Array<{ id: string; status: string; title: string; priority: string; estimated_value: number }>>("/api/tasks?status=all")
           const open = (Array.isArray(tasks) ? tasks : []).filter((t) => t.status === "open")
           if (open.length === 0) return "No open owner tasks — reset the demo to replay this step."
           const target = open.find((t) => t.priority === "high") ?? open[0]
           await api.patch(`/api/tasks/${target.id}`, { status: "completed" })
-          return `Task completed: "${target.title}" (${usd(target.estimated_value)} handled by the owner).`
+          return `Handoff completed: "${target.title}" (${usd(target.estimated_value)} handled personally by the owner).`
+        }
+      },
+      {
+        id: "measure",
+        chapter: "5 · MEASURE",
+        title: "Only real outcomes count as recovered",
+        why: "In the live product, recovered revenue is recorded only when a real outcome happens — appointment booked, quote accepted, customer reactivated. Here, see the honest ledger the pilot reports against.",
+        action: "Open the measured results",
+        goTo: "/impact",
+        run: async () => {
+          const imp = await api.get<{ recovered_value: number; identified_value: number; recovery_rate: number }>("/api/impact")
+          void imp
+          return "Opening VÉRIA Impact — identified vs actioned vs recovered, measured only from recorded outcomes."
         }
       }
     ]
@@ -115,7 +140,8 @@ export default function DemoMode() {
       })
       .catch((e) => setError(e.message))
     setSteps(buildSteps())
-  }, [buildSteps])
+    loadImpact()
+  }, [buildSteps, loadImpact])
 
   const runStep = async (id: string) => {
     setSteps((prev) => prev.map((s) => (s.id === id ? { ...s, busy: true } : s)))
@@ -123,6 +149,7 @@ export default function DemoMode() {
     try {
       const result = await step!.run()
       await loadDash()
+      await loadImpact()
       setSteps((prev) => prev.map((s) => (s.id === id ? { ...s, busy: false, status: "done", result } : s)))
     } catch (e) {
       const msg = e instanceof ApiError ? e.message : "Step failed"
@@ -139,6 +166,7 @@ export default function DemoMode() {
       setBefore(d)
       setAfter(d)
       setSteps(buildSteps())
+      loadImpact()
       setError(null)
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Reset failed")
@@ -156,9 +184,11 @@ export default function DemoMode() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-bold text-mist-50 sm:text-2xl">Demo Mode</h1>
-          <p className="mt-1 max-w-2xl text-sm text-mist-400">
-            A guided, five-minute sales walkthrough. Run each step and watch the revenue numbers move. Reset any time for a fresh demo.
+          <SectionIndex index="—">The recovery story</SectionIndex>
+          <h1 className="font-display mt-2 text-3xl font-medium leading-tight text-mist-50 sm:text-4xl">Demo Mode.</h1>
+          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-mist-300">
+            LEAK → IDENTIFY → PRIORITIZE → RECOVER → MEASURE. Run the steps in order for the 5-minute walkthrough.
+            Reset any time for a fresh demo. <span className="font-semibold text-brass-300">Illustrative demo data.</span>
           </p>
         </div>
         <button className="btn-secondary" onClick={resetDemo} disabled={resetting}>
@@ -169,9 +199,22 @@ export default function DemoMode() {
       {/* Live impact strip */}
       <div className="card grid grid-cols-2 gap-4 p-4 sm:grid-cols-4 sm:p-5">
         <div>
-          <div className="label">Recovered today</div>
-          <div className="mt-1 text-2xl font-bold tabular-nums text-emerald-300" data-testid="demo-recovered">{usd(after.revenue_recovered)}</div>
-          {recoveredDelta > 0 ? <div className="text-[11px] font-semibold text-emerald-300">+{usd(recoveredDelta)} during demo</div> : <div className="text-[11px] text-mist-400">baseline</div>}
+          <div className="label">Before · Recovered (recorded outcomes)</div>
+          <div className="metric-display mt-1 text-2xl leading-none text-emerald-300" data-testid="demo-recovered">
+            {usd(impact?.recovered_value ?? after.revenue_recovered)}
+          </div>
+          {recoveredDelta > 0 ? (
+            <div className="text-[11px] font-semibold text-emerald-300" data-testid="demo-change">
+              After: {usd((impact?.recovered_value ?? after.revenue_recovered))} · Change: +{usd(recoveredDelta)} — illustrative demo outcome
+            </div>
+          ) : (
+            <div className="text-[11px] text-mist-400">Baseline — run the steps to see the change</div>
+          )}
+        </div>
+        <div>
+          <div className="label">Identified opportunity</div>
+          <div className="mt-1 text-2xl font-bold tabular-nums text-brass-300">{usd(impact?.identified_value ?? 0)}</div>
+          <div className="text-[10px] text-mist-400">not guaranteed revenue</div>
         </div>
         <div>
           <div className="label">At risk</div>
@@ -181,27 +224,26 @@ export default function DemoMode() {
           <div className="label">Open missed calls</div>
           <div className="mt-1 text-2xl font-bold tabular-nums text-mist-50">{after.missed_calls_open}</div>
         </div>
-        <div>
-          <div className="label">Estimates awaiting follow-up</div>
-          <div className="mt-1 text-2xl font-bold tabular-nums text-mist-50">{after.estimates_awaiting_followup}</div>
-        </div>
       </div>
 
-      <Section title="Guided walkthrough" subtitle="Run the steps in order — each one demonstrates a recovery concept">
+      <Section title="Guided walkthrough" subtitle="Each step demonstrates one chapter of the recovery story">
         <ol className="divide-y divide-ink-800">
           {steps.map((s, i) => (
             <li key={s.id} className="px-4 py-4 sm:px-5">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="flex min-w-0 items-start gap-3">
                   <span
-                    className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
-                      s.status === "done" ? "bg-emerald-950/60 text-emerald-300" : "bg-brass-500/15 text-brass-300"
+                    className={`font-display mt-0.5 w-8 shrink-0 text-2xl italic leading-none ${
+                      s.status === "done" ? "text-emerald-300" : "text-brass-400"
                     }`}
                   >
-                    {s.status === "done" ? "✓" : i + 1}
+                    {s.status === "done" ? "✓" : String(i + 1).padStart(2, "0")}
                   </span>
                   <div className="min-w-0">
-                    <div className="text-sm font-semibold text-mist-50">{s.title}</div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-black tracking-widest text-brass-400">{s.chapter}</span>
+                      <span className="text-sm font-semibold text-mist-50">{s.title}</span>
+                    </div>
                     <p className="mt-1 max-w-2xl text-xs leading-relaxed text-mist-400">{s.why}</p>
                     {s.result ? (
                       <div className={`mt-2 rounded-lg border px-3 py-2 text-xs ${s.result.startsWith("⚠") ? "border-red-900/60 bg-red-950/30 text-red-300" : "border-emerald-900/50 bg-emerald-950/30 text-emerald-200"}`}>
@@ -211,7 +253,7 @@ export default function DemoMode() {
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
-                  {s.status === "pending" ? (
+                  {s.status !== "done" ? (
                     <button className="btn-primary px-3 py-1.5 text-xs" disabled={s.busy} onClick={() => runStep(s.id)}>
                       {s.busy ? "Running…" : s.action}
                     </button>
@@ -232,13 +274,19 @@ export default function DemoMode() {
           <div>
             <h2 className="text-sm font-bold uppercase tracking-wide text-mist-100">What this demo shows</h2>
             <p className="mt-1 max-w-2xl text-xs leading-relaxed text-mist-400">
-              The four places HVAC revenue leaks — missed calls, unanswered leads, idle estimates, dormant relationships —
-              and the workflow that recovers each one, with the owner always in control of personal outreach.
+              The places HVAC revenue leaks — missed enquiries, slow responses, idle quotes, dormant customers, stalled handoffs —
+              and the workflow that recovers each one, with the owner always in control and only real outcomes counted as revenue.
             </p>
           </div>
-          <SimulatedTag>Simulated data</SimulatedTag>
+          <SimulatedTag>Illustrative demo data</SimulatedTag>
         </div>
       </div>
     </div>
   )
+}
+
+function nextStage(stage: string): string {
+  const order = ["identified", "contacted", "responded", "qualified", "booked"]
+  const idx = order.indexOf(stage)
+  return idx === -1 || idx === order.length - 1 ? stage : order[idx + 1]
 }

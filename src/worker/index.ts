@@ -1,6 +1,9 @@
 /// <reference types="@cloudflare/workers-types" />
 import type { Database } from "./db"
 import { ValidationError, LEAD_SOURCES, LEAD_STATUSES, LEAD_URGENCIES } from "./validation"
+import { isoDaysAgo } from "./pipeline"
+import { JOB_TYPES } from "./jobTypes"
+import { buildEvidence, buildDataQuality, buildCalibration, buildRevenueWatch } from "./intel"
 import {
   createLead,
   getLead,
@@ -27,6 +30,43 @@ import {
   updateHumanTask
 } from "./recovery"
 import { resetDemo } from "./demo"
+import {
+  syncOpportunities,
+  advanceOpportunity,
+  buildLeakage,
+  buildImpact,
+  buildAudit,
+  computeRecoveryScore,
+  computeResponseHealth,
+  STAGE_ORDER,
+  RECOVERY_OUTCOMES,
+  listOpportunities
+} from "./pipeline"
+import {
+  previewCsv,
+  importCsv,
+  exportAllData,
+  deleteAllData,
+  getSettings,
+  updateSettings,
+  type ImportKind
+} from "./imports"
+import type { ColumnMapping } from "./csv"
+
+// Re-exported for tests and tooling (single-bundle build emits one file).
+export {
+  computeRecoveryScore,
+  computeResponseHealth,
+  buildLeakage,
+  buildImpact,
+  buildAudit,
+  syncOpportunities,
+  advanceOpportunity,
+  STAGE_ORDER,
+  RECOVERY_OUTCOMES
+} from "./pipeline"
+export { buildEvidence, buildDataQuality, buildCalibration, buildRevenueWatch } from "./intel"
+export { resetDemo } from "./demo"
 
 export interface Env {
   DB: Database
@@ -104,7 +144,10 @@ export default {
           company_id: "cmp_1000",
           statuses: LEAD_STATUSES,
           sources: LEAD_SOURCES,
-          urgencies: LEAD_URGENCIES
+          urgencies: LEAD_URGENCIES,
+          job_types: JOB_TYPES,
+          stages: STAGE_ORDER,
+          recovery_outcomes: RECOVERY_OUTCOMES
         })
       }
 
@@ -153,6 +196,112 @@ export default {
       m = path.match(/^\/api\/leads\/([^/]+)\/activity$/)
       if (m && method === "POST") {
         return json(await leadActivity(db, decodeURIComponent(m[1]), await readBody(request)))
+      }
+
+      // ---------- recovery pipeline (Revenue Recovery infrastructure) ----------
+      if (method === "POST" && path === "/api/opportunities/sync") {
+        return json(await syncOpportunities(db))
+      }
+
+      if (method === "GET" && path === "/api/opportunities") {
+        const qp = url.searchParams
+        const items = await listOpportunities(db)
+        const stage = qp.get("stage")
+        const source = qp.get("source")
+        const filtered = items
+          .filter((o) => (stage && stage !== "all" ? o.stage === stage : true))
+          .filter((o) => (source && source !== "all" ? o.source_type === source : true))
+        return json({ items: filtered })
+      }
+
+      m = path.match(/^\/api\/opportunities\/([^/]+)$/)
+      if (m && method === "PATCH") {
+        return json(await advanceOpportunity(db, decodeURIComponent(m[1]), await readBody(request)))
+      }
+
+      if (method === "GET" && path === "/api/leakage") {
+        return json(await buildLeakage(db))
+      }
+
+      if (method === "GET" && path === "/api/recovery-score") {
+        return json(await computeRecoveryScore(db))
+      }
+
+      if (method === "GET" && path === "/api/response-health") {
+        const since = url.searchParams.get("days") ? isoDaysAgo(Number(url.searchParams.get("days")) || 90) : null
+        const res = since
+          ? await db.prepare(`SELECT response_minutes, first_response_at FROM enquiries WHERE company_id = ?1 AND received_at >= ?2`).bind("cmp_1000", since).all()
+          : await db.prepare(`SELECT response_minutes, first_response_at FROM enquiries WHERE company_id = ?1`).bind("cmp_1000").all()
+        return json(computeResponseHealth(res.results as { response_minutes: number | null; first_response_at: string | null }[]))
+      }
+
+      if (method === "GET" && path === "/api/audit") {
+        return json(await buildAudit(db, Number(url.searchParams.get("days")) || 90))
+      }
+
+      if (method === "GET" && path === "/api/impact") {
+        return json(await buildImpact(db))
+      }
+
+      // ---------- intelligence: evidence / data quality / calibration / watch ----------
+      m = path.match(/^\/api\/opportunities\/([^/]+)\/evidence$/)
+      if (m && method === "GET") {
+        const ev = await buildEvidence(db, decodeURIComponent(m[1]))
+        if (!ev) return json({ error: "Recovery opportunity not found" }, 404)
+        return json(ev)
+      }
+
+      if (method === "GET" && path === "/api/data-quality") {
+        return json(await buildDataQuality(db))
+      }
+
+      if (method === "GET" && path === "/api/calibration") {
+        return json(await buildCalibration(db))
+      }
+
+      if (method === "GET" && path === "/api/revenue-watch") {
+        return json(await buildRevenueWatch(db, Number(url.searchParams.get("days")) || 7))
+      }
+
+      // ---------- prospect mode: CSV import ----------
+      if (method === "POST" && path === "/api/imports/preview") {
+        const body = await readBody(request)
+        return json(
+          previewCsv(
+            String(body.kind ?? "leads") as ImportKind,
+            String(body.filename ?? "upload.csv"),
+            String(body.csv ?? "")
+          )
+ )
+      }
+
+      if (method === "POST" && path === "/api/imports/commit") {
+        const body = await readBody(request)
+        return json(
+          await importCsv(
+            db,
+            String(body.kind ?? "leads") as ImportKind,
+            String(body.filename ?? "upload.csv"),
+            String(body.csv ?? ""),
+            body.mapping && typeof body.mapping === "object" ? (body.mapping as unknown as ColumnMapping) : undefined
+          )
+        )
+      }
+
+      if (method === "GET" && path === "/api/settings") {
+        return json(await getSettings(db))
+      }
+
+      if (method === "PATCH" && path === "/api/settings") {
+        return json(await updateSettings(db, await readBody(request)))
+      }
+
+      if (method === "GET" && path === "/api/export") {
+        return json({ exported_at: new Date().toISOString(), data: await exportAllData(db) })
+      }
+
+      if (method === "POST" && path === "/api/data/delete") {
+        return json(await deleteAllData(db))
       }
 
       // ---------- dashboard / radar / brief ----------

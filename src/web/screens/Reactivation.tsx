@@ -88,7 +88,7 @@ export default function Reactivation() {
         </div>
         <div className="card p-4">
           <div className="label">Reactivation value</div>
-          <div className="mt-1 text-3xl font-bold tabular-nums text-brass-300">{usd(totalValue)}</div>
+          <div className="mt-1 metric-display text-3xl leading-none text-brass-300">{usd(totalValue)}</div>
         </div>
         <div className="card p-4">
           <div className="label">Outreach queued</div>

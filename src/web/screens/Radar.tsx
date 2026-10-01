@@ -2,6 +2,10 @@ import React, { useEffect, useState } from "react"
 import { api } from "../api"
 import { nav } from "../App"
 import { usd } from "../format"
+
+// Financial note: each row is a DISTINCT opportunity from the unified pipeline —
+// the same customer problem never appears in two categories, so the total is a
+// true sum, not a double count.
 import { UrgencyChip, Loading, ErrorState, EmptyState } from "../ui"
 
 interface RadarItem {
@@ -51,14 +55,17 @@ export default function RadarScreen() {
         </p>
       </div>
 
-      <div className="card flex flex-wrap items-center justify-between gap-3 border-brass-600/30 bg-gradient-to-b from-brass-950/20 to-ink-900 p-4 sm:p-5">
+      <div className="card flex flex-wrap items-center justify-between gap-3 p-4 sm:p-5">
         <div>
-          <div className="label">Total estimated value on the radar</div>
-          <div className="mt-1 text-3xl font-black tabular-nums text-brass-300" data-testid="radar-total">{usd(total)}</div>
+          <div className="label">Total identified opportunity</div>
+          <div className="mt-1 metric-serif text-4xl leading-none text-brass-400" data-testid="radar-total">{usd(total)}</div>
+          <div className="mt-1.5 text-[10px] uppercase tracking-[0.12em] text-mist-500">
+            Each row is a distinct opportunity — no category double counts a customer
+          </div>
         </div>
         <div className="text-right text-xs text-mist-400">
           <div className="font-semibold text-mist-200">{items.length} opportunities</div>
-          <div className="mt-0.5">Sorted by recoverability score</div>
+          <div className="mt-0.5">Identified, not guaranteed revenue</div>
         </div>
       </div>
 
@@ -89,7 +96,7 @@ export default function RadarScreen() {
                     </div>
                   </div>
                   <div className="flex shrink-0 flex-col items-end gap-1.5">
-                    <span className="text-lg font-bold tabular-nums text-red-300">{usd(r.estimated_value)}</span>
+                    <span className="metric-display text-lg text-red-300">{usd(r.estimated_value)}</span>
                     <div className="flex items-center gap-1.5">
                       <UrgencyChip urgency={r.urgency} />
                     </div>

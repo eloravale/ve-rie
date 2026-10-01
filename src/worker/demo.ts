@@ -1,4 +1,5 @@
 import seedSql from "../../migrations/0002_seed.sql"
+import recoverySeedSql from "../../migrations/0004_seed_recovery.sql"
 import type { Database } from "./db"
 import { audit } from "./audit"
 
@@ -9,6 +10,10 @@ const TABLES = [
   "referrals",
   "missed_calls",
   "reactivations",
+  "import_batches",
+  "recovery_opportunities",
+  "enquiries",
+  "company_settings",
   "estimates",
   "appointments",
   "followups",
@@ -28,6 +33,7 @@ export async function resetDemo(db: Database): Promise<{ ok: true }> {
     await db.prepare(`DELETE FROM ${table}`).run()
   }
   await db.exec(seedSql)
+  await db.exec(recoverySeedSql)
   await audit(db, {
     actor: "owner",
     entityType: "system",

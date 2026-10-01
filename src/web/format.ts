@@ -1,14 +1,22 @@
 /** Display formatting shared across screens. */
 
+import { getActiveSettings, type CurrencyCode } from "./recovery-format"
+
+function currencySymbol(): string {
+  const c = getActiveSettings().currency as CurrencyCode | undefined
+  return c && ("USD" === c || "GBP" === c || "EUR" === c) ? ({ USD: "$", GBP: "£", EUR: "€" } as Record<CurrencyCode, string>)[c] : "$"
+}
+
 export function usd(n: number | null | undefined): string {
   const v = Number(n ?? 0)
-  return "$" + Math.round(v).toLocaleString("en-US")
+  return currencySymbol() + Math.round(v).toLocaleString("en-US")
 }
 
 export function usdCompact(n: number | null | undefined): string {
   const v = Math.round(Number(n ?? 0))
-  if (v >= 1000) return "$" + (v / 1000).toFixed(v % 1000 === 0 ? 0 : 1) + "k"
-  return "$" + v.toLocaleString("en-US")
+  const sym = currencySymbol()
+  if (v >= 1000) return sym + (v / 1000).toFixed(v % 1000 === 0 ? 0 : 1) + "k"
+  return sym + v.toLocaleString("en-US")
 }
 
 function parseTs(ts: string | null | undefined): number {

@@ -8,54 +8,205 @@
   }
   body {
     @apply bg-ink-950 text-mist-100 font-sans antialiased;
+    font-feature-settings: "ss01" on, "cv11" on;
+  }
+  /* Paper grain — barely perceptible, warms the whole canvas */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0.4;
+    mix-blend-mode: multiply;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA type='linear' slope='0.055'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  #root {
+    position: relative;
+    z-index: 1;
   }
   ::selection {
     @apply bg-brass-500/30 text-mist-50;
   }
   * {
     scrollbar-width: thin;
-    scrollbar-color: #333943 transparent;
+    scrollbar-color: #BBA98D transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #BBA98D;
   }
 }
 
 @layer components {
+  /* Panels: quiet paper sheets, hairline rules, squared geometry */
   .card {
-    @apply rounded-xl border border-ink-700 bg-ink-900 shadow-card;
+    @apply rounded-md border border-ink-800 bg-ink-900 shadow-card;
   }
   .label {
-    @apply text-[11px] font-semibold uppercase tracking-[0.14em] text-mist-400;
+    @apply text-[10px] font-semibold uppercase tracking-[0.18em] text-mist-400;
+  }
+  /* Eyebrow: tiny metadata with a brass square marker */
+  .eyebrow {
+    @apply inline-flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.22em] text-mist-400;
+  }
+  .eyebrow::before {
+    content: "";
+    @apply inline-block h-1.5 w-1.5 rotate-45 bg-brass-500;
   }
   .input {
-    @apply w-full rounded-lg border border-ink-600 bg-ink-800 px-3 py-2.5 text-sm text-mist-100 placeholder-mist-400 outline-none transition focus:border-brass-500/70 focus:ring-1 focus:ring-brass-500/30;
+    @apply w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2.5 text-sm text-mist-50 placeholder-mist-400 outline-none transition focus:border-brass-500 focus:ring-1 focus:ring-brass-500/25;
   }
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition select-none;
+    @apply inline-flex items-center justify-center gap-2 rounded-sm px-4 py-2.5 text-[13px] font-semibold tracking-[0.04em] uppercase transition-all duration-200 select-none;
   }
+  /* Primary: charcoal block, ivory text, brass base-rule sweeps in on hover */
   .btn-primary {
-    @apply btn bg-brass-500 text-ink-950 hover:bg-brass-400 active:bg-brass-600;
+    @apply btn border border-ink-900 bg-ink-900 text-ink-950;
+    box-shadow: inset 0 -2px 0 0 rgba(176, 138, 71, 0);
   }
+  .btn-primary:hover:not(:disabled) {
+    background: #14100a;
+    box-shadow: inset 0 -2px 0 0 #A9824A;
+  }
+  .btn-primary:active {
+    background: #0d0a06;
+  }
+  /* Secondary: transparent paper, hairline frame */
   .btn-secondary {
-    @apply btn border border-ink-600 bg-ink-800 text-mist-100 hover:border-ink-500 hover:bg-ink-750;
+    @apply btn border border-ink-600 bg-transparent text-mist-100 hover:border-ink-500 hover:bg-ink-850/70;
   }
   .btn-ghost {
-    @apply btn text-mist-300 hover:bg-ink-800 hover:text-mist-100;
+    @apply btn text-mist-300 hover:bg-ink-850 hover:text-mist-50;
   }
   .btn-danger {
-    @apply btn border border-red-900/60 bg-red-950/40 text-red-300 hover:bg-red-900/40;
+    @apply btn border border-red-900/50 bg-red-950/50 text-red-300 hover:border-red-900 hover:bg-red-950/80;
   }
   .btn:disabled {
     @apply cursor-not-allowed opacity-40;
   }
+  /* Chips: squared, hairline, uppercase metadata */
   .chip {
-    @apply inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold;
+    @apply inline-flex items-center gap-1 rounded-sm border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em];
   }
   .table-row {
-    @apply border-t border-ink-800 transition hover:bg-ink-850;
+    @apply border-t border-ink-800 transition hover:bg-ink-850/60;
+  }
+  /* Fine horizontal rule with optional centered brass diamond */
+  .rule {
+    @apply relative h-px w-full bg-ink-800;
+  }
+  .rule-diamond::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 7px;
+    height: 7px;
+    transform: translate(-50%, -50%) rotate(45deg);
+    background: #F5EEE2;
+    border: 1px solid #A9824A;
+  }
+  /* Faint girih-inspired geometric field — for heroes, transitions, empty states */
+  .motif-field {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 120 120'%3E%3Cg fill='none' stroke='%23A29074' stroke-width='0.7'%3E%3Crect x='35' y='35' width='50' height='50'/%3E%3Crect x='35' y='35' width='50' height='50' transform='rotate(45 60 60)'/%3E%3Ccircle cx='60' cy='60' r='10'/%3E%3Cpath d='M60 0v20M60 100v20M0 60h20M100 60h20'/%3E%3C/g%3E%3C/svg%3E");
+    background-size: 120px 120px;
+  }
+  /* Subtle architectural grid — one-pixel columns, barely visible */
+  .blueprint-grid {
+    background-image: linear-gradient(to right, rgba(148, 134, 106, 0.07) 1px, transparent 1px);
+    background-size: 56px 100%;
+  }
+  /* Serif display helpers */
+  .font-display {
+    font-family: Fraunces, "Iowan Old Style", Georgia, Cambria, "Times New Roman", serif;
+    font-optical-sizing: auto;
+  }
+  /* Financial numerals — Inter, tabular, restrained. Used for anything that
+     aligns in columns or repeats: every figure stays perfectly registered. */
+  .metric-display {
+    @apply font-sans font-semibold tracking-[-0.01em];
+    font-feature-settings: "tnum" 1, "lnum" 1;
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+  /* Statement numerals — the few standalone hero figures. Editorial serif,
+     optical size high, still strictly legible. Never used inside tables. */
+  .metric-serif {
+    @apply font-display font-medium tracking-[-0.015em];
+    font-variation-settings: "opsz" 100;
+    font-variant-numeric: lining-nums;
+  }
+  /* Tiny geometric corner marks for feature panels */
+  .corner-marks {
+    position: relative;
+  }
+  .corner-marks::before,
+  .corner-marks::after {
+    content: "";
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    pointer-events: none;
+  }
+  .corner-marks::before {
+    top: -1px;
+    left: -1px;
+    border-top: 1px solid #A9824A;
+    border-left: 1px solid #A9824A;
+  }
+  .corner-marks::after {
+    bottom: -1px;
+    right: -1px;
+    border-bottom: 1px solid #A9824A;
+    border-right: 1px solid #A9824A;
+  }
+  /* Calm motion — slow reveals, no bounce */
+  .reveal {
+    animation: veria-reveal 0.7s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  }
+  .signal-dot {
+    @apply inline-block h-1.5 w-1.5 rounded-full;
   }
 }
 
 @layer utilities {
   .text-balance {
     text-wrap: balance;
+  }
+  @keyframes veria-reveal {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes veria-diamond {
+    0%,
+    100% {
+      transform: rotate(45deg) scale(1);
+      opacity: 0.9;
+    }
+    50% {
+      transform: rotate(45deg) scale(0.72);
+      opacity: 0.45;
+    }
+  }
+  .animate-diamond {
+    animation: veria-diamond 1.6s ease-in-out infinite;
+  }
+
+  /* Sales-ready audit printing: strip app chrome, keep the document. */
+  @media print {
+    .no-print {
+      display: none !important;
+    }
+    body {
+      background: #ffffff;
+    }
+    body::before {
+      display: none;
+    }
   }
 }

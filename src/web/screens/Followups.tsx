@@ -86,12 +86,12 @@ export default function FollowupsScreen() {
         </div>
         <div className="card p-4">
           <div className="label">Overdue value</div>
-          <div className="mt-1 text-3xl font-bold tabular-nums text-red-300">{usd(overdueValue)}</div>
+          <div className="mt-1 metric-display text-3xl leading-none text-red-300">{usd(overdueValue)}</div>
           <div className="mt-0.5 text-xs text-mist-400">Past due date</div>
         </div>
         <div className="card p-4">
           <div className="label">Completed</div>
-          <div className="mt-1 text-3xl font-bold tabular-nums text-emerald-300">{done.length}</div>
+          <div className="mt-1 metric-display text-3xl leading-none text-emerald-300">{done.length}</div>
           <div className="mt-0.5 text-xs text-mist-400">This quarter</div>
         </div>
       </div>

@@ -757,7 +757,7 @@ export async function runReactivation(db: Database, id: string): Promise<{ react
   await db
     .prepare(
       `INSERT INTO human_tasks (id, company_id, lead_id, title, reason, estimated_value, priority, recommended_action, status, due_at, created_at, updated_at)
-       VALUES (?1,?2,?3,?4,?5,?6,'normal',?7,'open',?8,?9,?10)`
+       VALUES (?1,?2,?3,?4,?5,?6,'medium',?7,'open',?8,?9,?10)`
     )
     .bind(
       taskId, COMPANY_ID, lead.id,
@@ -780,13 +780,13 @@ export async function runReactivation(db: Database, id: string): Promise<{ react
 // =====================================================================
 
 export async function listHumanTasks(db: Database, status?: string): Promise<(Record<string, unknown> & { lead_name: string | null })[]> {
-  let sql = `SELECT t.*, l.name AS lead_name FROM human_tasks t LEFT JOIN leads l ON l.id = t.lead_id WHERE t.company_id = ?1`
+  let sql = `SELECT t.*, l.name AS lead_name, l.phone AS lead_phone FROM human_tasks t LEFT JOIN leads l ON l.id = t.lead_id WHERE t.company_id = ?1`
   const params: unknown[] = [COMPANY_ID]
   if (status && status !== "all") {
     sql += ` AND t.status = ?2`
     params.push(status)
   }
-  sql += ` ORDER BY CASE t.priority WHEN 'high' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END ASC, CASE t.status WHEN 'open' THEN 0 ELSE 1 END ASC, t.due_at ASC`
+  sql += ` ORDER BY CASE t.priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END ASC, CASE t.status WHEN 'open' THEN 0 ELSE 1 END ASC, t.due_at ASC`
   const res = await db.prepare(sql).bind(...params).all<Record<string, unknown>>()
   return (res.results ?? []) as (Record<string, unknown> & { lead_name: string | null })[]
 }
@@ -801,14 +801,28 @@ export async function updateHumanTask(db: Database, id: string, body: Record<str
     throw new ValidationError("status must be open, completed, or dismissed", { status: "invalid" })
   }
   const now = nowIso()
-  await db.prepare(`UPDATE human_tasks SET status = ?3, updated_at = ?4 WHERE id = ?1 AND company_id = ?2`).bind(id, COMPANY_ID, status, now).run()
+
+  // Optional handoff enrichments: assign to a person, snooze with a concrete return date.
+  const assignedTo = typeof body.assigned_to === "string" && body.assigned_to.trim() ? body.assigned_to.trim().slice(0, 60) : null
+  const snoozeDays = typeof body.snooze_days === "number" && body.snooze_days > 0 ? Math.min(30, Math.round(body.snooze_days)) : 0
+
+  await db
+    .prepare(
+      `UPDATE human_tasks SET status = ?3, assigned_to = COALESCE(?4, assigned_to),
+         due_at = CASE WHEN ?5 > 0 THEN ?6 ELSE due_at END, updated_at = ?7
+       WHERE id = ?1 AND company_id = ?2`
+    )
+    .bind(id, COMPANY_ID, status, assignedTo, snoozeDays, snoozeDays ? isoDaysAgo(-snoozeDays) : null, now)
+    .run()
 
   await audit(db, {
     actor: "owner",
     entityType: "human_task",
     entityId: id,
-    action: status === "completed" ? "task_completed" : status === "dismissed" ? "task_dismissed" : "task_reopened",
-    detail: `Task "${String(task.title)}" ${status}.`
+    action: snoozeDays > 0 ? "task_snoozed" : status === "completed" ? "task_completed" : status === "dismissed" ? "task_dismissed" : "task_reopened",
+    detail: snoozeDays > 0
+      ? `Task "${String(task.title)}" snoozed ${snoozeDays} day${snoozeDays === 1 ? "" : "s"}.`
+      : `Task "${String(task.title)}" ${status}${assignedTo ? ` — assigned to ${assignedTo}` : ""}.`
   })
 
   const updated = await db.prepare(`SELECT t.*, l.name AS lead_name FROM human_tasks t LEFT JOIN leads l ON l.id = t.lead_id WHERE t.id = ?1`).bind(id).first<Record<string, unknown>>()

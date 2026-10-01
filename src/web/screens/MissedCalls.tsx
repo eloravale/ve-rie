@@ -69,19 +69,19 @@ export default function MissedCalls() {
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <div className="card p-4">
           <div className="label">Calls unrecovered</div>
-          <div className="mt-1 text-3xl font-bold tabular-nums text-red-300" data-testid="missed-open">{open.length}</div>
+          <div className="mt-1 metric-display text-3xl leading-none text-red-300" data-testid="missed-open">{open.length}</div>
         </div>
         <div className="card p-4">
           <div className="label">Revenue at risk</div>
-          <div className="mt-1 text-3xl font-bold tabular-nums text-red-300">{usd(atRisk)}</div>
+          <div className="mt-1 metric-display text-3xl leading-none text-red-300">{usd(atRisk)}</div>
         </div>
         <div className="card p-4">
           <div className="label">Recovered</div>
-          <div className="mt-1 text-3xl font-bold tabular-nums text-emerald-300">{recovered.length}</div>
+          <div className="mt-1 metric-display text-3xl leading-none text-emerald-300">{recovered.length}</div>
         </div>
         <div className="card p-4">
           <div className="label">Revenue recovered</div>
-          <div className="mt-1 text-3xl font-bold tabular-nums text-emerald-300">{usd(recoveredValue)}</div>
+          <div className="mt-1 metric-display text-3xl leading-none text-emerald-300">{usd(recoveredValue)}</div>
         </div>
       </div>
 
@@ -101,7 +101,7 @@ export default function MissedCalls() {
                 </div>
                 <div className="flex items-center gap-3">
                   <div className="text-right">
-                    <div className="text-sm font-bold tabular-nums text-red-300">{usd(m.estimated_value)}</div>
+                    <div className="metric-display text-base text-red-300">{usd(m.estimated_value)}</div>
                     <div className="text-[10px] uppercase tracking-wider text-mist-400">at risk</div>
                   </div>
                   <button className="btn-primary px-3 py-1.5 text-xs" disabled={busyId === m.id} onClick={() => recover(m)}>
@@ -133,7 +133,7 @@ export default function MissedCalls() {
                   <div className="mt-0.5 text-xs text-mist-400">{m.notes ?? dateTime(m.called_at)}</div>
                 </div>
                 <div className="flex items-center gap-3">
-                  <span className="text-sm font-bold tabular-nums text-emerald-300">{usd(m.estimated_value)}</span>
+                  <span className="metric-display text-base text-emerald-300">{usd(m.estimated_value)}</span>
                   {m.lead_id ? (
                     <button className="btn-ghost px-2 py-1 text-xs" onClick={() => nav(`/leads/${m.lead_id}`)}>
                       View lead
