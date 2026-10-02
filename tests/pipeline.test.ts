@@ -58,6 +58,8 @@ beforeAll(async () => {
   tmpDb = path.join(os.tmpdir(), `veria-pipeline-test-${Date.now()}.db`)
   db = new DatabaseSync(tmpDb)
   db.exec("PRAGMA journal_mode = MEMORY;")
+  // Phase 0: referential integrity enforced in test harnesses too.
+  db.exec("PRAGMA foreign_keys = ON;")
   const migrationsDir = path.join(ROOT, "migrations")
   db.exec("CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)")
   for (const f of fs.readdirSync(migrationsDir).filter((x) => x.endsWith(".sql")).sort()) {
@@ -116,9 +118,11 @@ describe("response health (pure computation)", () => {
 })
 
 describe("opportunity sync — classification & idempotency", () => {
-  it("materializes opportunities once and is idempotent", async () => {
+  it("seeded workspace is a sync fixed point; repeat syncs are idempotent", async () => {
+    // Phase 0 §11: the seed already materializes everything sync would derive
+    // (migration 0006) — a first sync on a pristine workspace creates ZERO.
     const first = await worker.syncOpportunities(A())
-    expect(first.created).toBeGreaterThan(0)
+    expect(first.created).toBe(0)
     const second = await worker.syncOpportunities(A())
     expect(second.created).toBe(0)
   })
@@ -234,7 +238,7 @@ describe("demo reset — full reversibility", () => {
     const rows = await A()
       .prepare(`SELECT COUNT(*) AS n FROM recovery_opportunities WHERE company_id = 'cmp_1000'`)
       .first<{ n: number }>()
-    expect(rows?.n).toBe(19) // 15 open + 4 historical
+    expect(rows?.n).toBe(25) // 21 open + 3 historical recovered + 1 lost (0006 fixed point, rop_8014 deduped)
     const impact = await worker.buildImpact(A())
     expect(impact.recovered_value).toBeCloseTo(22400, 2)
     // Cold start check on a wiped DB: after reset the score is back to seeded leaky levels, not 0.

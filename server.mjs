@@ -37,6 +37,9 @@ if (process.env.VERIA_RESET === "1" || process.argv.includes("--reset")) {
 
 const db = new DatabaseSync(DB_FILE)
 db.exec("PRAGMA journal_mode = WAL;")
+// Phase 0 (Foundation + Truth): enforce referential integrity at the database
+// level — ledger rows reference companies, opportunities reference sources.
+db.exec("PRAGMA foreign_keys = ON;")
 
 // ---------- migrations + seed ----------
 const MIGRATIONS_DIR = path.join(ROOT, "migrations")
@@ -139,6 +142,14 @@ function serveStatic(pathname, res) {
   fs.createReadStream(file).pipe(res)
 }
 
+// Phase 0 runtime configuration, passed from the process environment into the
+// worker's Env. Never logged; only VERIA_ALLOWED_ORIGINS is ever reflected.
+const WORKER_ENV = {
+  VERIA_ADMIN_TOKEN: process.env.VERIA_ADMIN_TOKEN || undefined,
+  VERIA_PROTECTED_MODE: process.env.VERIA_PROTECTED_MODE || undefined,
+  VERIA_ALLOWED_ORIGINS: process.env.VERIA_ALLOWED_ORIGINS || undefined
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || "localhost"}`)
   try {
@@ -152,7 +163,7 @@ const server = http.createServer(async (req, res) => {
         body: ["GET", "HEAD"].includes(req.method) || body.length === 0 ? undefined : body
       }
       const request = new Request(url.toString(), init)
-      const env = { DB: adapter(db), ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } }
+      const env = { DB: adapter(db), ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) }, ...WORKER_ENV }
       const response = await worker.fetch(request, env)
       const buf = Buffer.from(await response.arrayBuffer())
       const headers = {}

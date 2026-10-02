@@ -6,6 +6,28 @@
 
 import { COMPANY_ID, newId, nowIso, type Database } from "./db"
 import { audit } from "./audit"
+import { getWorkspaceKind, type WorkspaceKind } from "./demo"
+
+/**
+ * Phase 0 transaction helper: run a unit of work atomically.
+ * On any error the transaction is rolled back and re-thrown — a failed import
+ * or reset can never leave half-written state. Nesting is deliberately not
+ * supported: callers must be leaf operations (importCsv, resetDemo, …).
+ */
+export async function withTransaction(db: Database, fn: () => Promise<void>): Promise<void> {
+  await db.exec("BEGIN")
+  try {
+    await fn()
+    await db.exec("COMMIT")
+  } catch (e) {
+    try {
+      await db.exec("ROLLBACK")
+    } catch {
+      /* transaction already rolled back — nothing to do */
+    }
+    throw e
+  }
+}
 import { classifyJobType } from "./jobTypes"
 import {
   parseCsv,
@@ -105,7 +127,103 @@ export interface ImportResult {
   row_count: number
   imported: number
   skipped: number
+  /** Rows skipped as duplicates of existing data (Phase 0 §CSV integrity). */
+  duplicates: number
+  /** What a duplicate means for this kind: which field combination matched. */
+  duplicate_rule: string
   errors: string[]
+}
+
+/** Normalized digits of a phone-ish string (last 10 digits, min 7). */
+function normalizePhone(value: string | undefined | null): string {
+  const d = String(value ?? "").replace(/\D/g, "")
+  return d.length >= 7 ? d.slice(-10) : ""
+}
+
+function normalizeName(value: string | undefined | null): string {
+  return String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ")
+}
+
+/**
+ * Duplicate detection per import kind (Phase 0):
+ *   leads     — normalized name + phone
+ *   calls     — normalized phone + call date
+ *   quotes    — linked lead + amount + quote date
+ *   customers — normalized name + phone
+ * Duplicates are SKIPPED and reported, never silently imported twice.
+ */
+class DuplicateTracker {
+  private leads = new Set<string>()
+  private calls = new Set<string>()
+  private quotes = new Set<string>()
+  private customers = new Set<string>()
+
+  static readonly RULES: Record<ImportKind, string> = {
+    leads: "normalized name + phone",
+    calls: "normalized phone + call date",
+    quotes: "customer + amount + quote date",
+    customers: "normalized name + phone"
+  }
+
+  async load(db: Database): Promise<void> {
+    const leads = await db
+      .prepare(`SELECT name, phone FROM leads WHERE company_id = ?1`)
+      .bind(COMPANY_ID)
+      .all<{ name: string; phone: string | null }>()
+    for (const l of leads.results ?? []) {
+      const p = normalizePhone(l.phone)
+      if (normalizeName(l.name) && p) this.leads.add(`${normalizeName(l.name)}|${p}`)
+    }
+    const calls = await db
+      .prepare(`SELECT caller_phone, called_at FROM missed_calls WHERE company_id = ?1`)
+      .bind(COMPANY_ID)
+      .all<{ caller_phone: string | null; called_at: string | null }>()
+    for (const c of calls.results ?? []) {
+      const p = normalizePhone(c.caller_phone)
+      if (p) this.calls.add(`${p}|${String(c.called_at ?? "").slice(0, 10)}`)
+    }
+    const quotes = await db
+      .prepare(`SELECT e.amount, e.sent_at, l.name FROM estimates e JOIN leads l ON l.id = e.lead_id WHERE e.company_id = ?1`)
+      .bind(COMPANY_ID)
+      .all<{ amount: number; sent_at: string | null; name: string }>()
+    for (const q of quotes.results ?? []) {
+      this.quotes.add(`${normalizeName(q.name)}|${Number(q.amount ?? 0)}|${String(q.sent_at ?? "").slice(0, 10)}`)
+    }
+    const customers = await db
+      .prepare(`SELECT name, phone FROM customers WHERE company_id = ?1`)
+      .bind(COMPANY_ID)
+      .all<{ name: string; phone: string | null }>()
+    for (const c of customers.results ?? []) {
+      const p = normalizePhone(c.phone)
+      if (normalizeName(c.name) && p) this.customers.add(`${normalizeName(c.name)}|${p}`)
+    }
+  }
+
+  isDuplicate(kind: ImportKind, key: { name?: string; phone?: string; amount?: number; date?: string }): boolean {
+    const name = normalizeName(key.name)
+    const phone = normalizePhone(key.phone)
+    const date = String(key.date ?? "").slice(0, 10)
+    switch (kind) {
+      case "leads":
+        return name !== "" && phone !== "" && this.leads.has(`${name}|${phone}`)
+      case "calls":
+        return phone !== "" && this.calls.has(`${phone}|${date}`)
+      case "quotes":
+        return this.quotes.has(`${name}|${Number(key.amount ?? 0)}|${date}`)
+      case "customers":
+        return name !== "" && phone !== "" && this.customers.has(`${name}|${phone}`)
+    }
+  }
+
+  add(kind: ImportKind, key: { name?: string; phone?: string; amount?: number; date?: string }): void {
+    const name = normalizeName(key.name)
+    const phone = normalizePhone(key.phone)
+    const date = String(key.date ?? "").slice(0, 10)
+    if (kind === "leads" && name && phone) this.leads.add(`${name}|${phone}`)
+    if (kind === "calls" && phone) this.calls.add(`${phone}|${date}`)
+    if (kind === "quotes") this.quotes.add(`${name}|${Number(key.amount ?? 0)}|${date}`)
+    if (kind === "customers" && name && phone) this.customers.add(`${name}|${phone}`)
+  }
 }
 
 interface Ctx {
@@ -113,13 +231,18 @@ interface Ctx {
   errors: string[]
 }
 
-function requireName(values: Record<string, string>, i: number, ctx: Ctx): string | null {
+function requireName(values: Record<string, string>, i: number, _ctx: Ctx): string | null {
   const name = (values.name ?? values.customer_name ?? "").trim()
   if (!name) {
-    ctx.errors.push(`Row ${i + 2}: missing name — skipped`)
+    _ctx.errors.push(`Row ${i + 2}: missing name — skipped`)
     return null
   }
-  return name.slice(0, 120)
+  // A name this long means the CSV columns are shifted/mangled — abort the
+  // whole import rather than corrupt the dataset (transaction rolls back).
+  if (name.length > 120) {
+    throw new RangeError(`Row ${i + 2}: name exceeds 120 characters — import aborted`)
+  }
+  return name
 }
 
 function dateOrNow(values: Record<string, string>): string {
@@ -145,6 +268,11 @@ export async function importCsv(
   const batchId = newId("imp")
   const ctx: Ctx = { batchId, errors: [] }
   let imported = 0
+  let duplicates = 0
+  const dup = new DuplicateTracker()
+  await dup.load(db)
+
+  await withTransaction(db, async () => {
 
   if (kind === "leads") {
     for (let i = 0; i < records.length; i++) {
@@ -154,6 +282,11 @@ export async function importCsv(
       const now = nowIso()
       const created = dateOrNow(values)
       const status = normStatus(values.status) ?? "new"
+      if (dup.isDuplicate("leads", { name, phone: values.phone })) {
+        duplicates++
+        ctx.errors.push(`Row ${i + 2}: duplicate lead (${name}) — skipped`)
+        continue
+      }
       await db
         .prepare(
           `INSERT INTO leads (id, company_id, name, email, phone, service, status, source, urgency, job_type,
@@ -175,6 +308,7 @@ export async function importCsv(
           lastActivity(values, created), created, now
         )
         .run()
+      dup.add("leads", { name, phone: values.phone })
       imported++
     }
   } else if (kind === "calls") {
@@ -187,6 +321,11 @@ export async function importCsv(
         continue
       }
       const when = parseDateCell(values.created_at) ?? nowIso()
+      if (dup.isDuplicate("calls", { phone, date: when })) {
+        duplicates++
+        ctx.errors.push(`Row ${i + 2}: duplicate call (${phone}) — skipped`)
+        continue
+      }
       await db
         .prepare(
           `INSERT INTO missed_calls (id, company_id, caller_name, caller_phone, called_at, recovered, lead_id, estimated_value, notes, created_at, updated_at)
@@ -202,6 +341,7 @@ export async function importCsv(
           nowIso()
         )
         .run()
+      dup.add("calls", { phone, date: when })
       imported++
     }
   } else if (kind === "quotes") {
@@ -215,6 +355,11 @@ export async function importCsv(
         continue
       }
       const sentAt = parseDateCell(values.quote_date) ?? parseDateCell(values.created_at) ?? nowIso()
+      if (dup.isDuplicate("quotes", { name, amount, date: sentAt })) {
+        duplicates++
+        ctx.errors.push(`Row ${i + 2}: duplicate quote (${name}, ${amount}) — skipped`)
+        continue
+      }
       // Find or create the linked lead by name+phone.
       let leadId: string | null = null
       const existing = await db
@@ -256,6 +401,7 @@ export async function importCsv(
           nowIso()
         )
         .run()
+      dup.add("quotes", { name, amount, date: sentAt })
       imported++
     }
   } else {
@@ -264,6 +410,11 @@ export async function importCsv(
       const { values } = records[i]
       const name = requireName(values, i, ctx)
       if (!name) continue
+      if (dup.isDuplicate("customers", { name, phone: values.phone })) {
+        duplicates++
+        ctx.errors.push(`Row ${i + 2}: duplicate customer (${name}) — skipped`)
+        continue
+      }
       await db
         .prepare(
           `INSERT INTO customers (id, company_id, name, email, phone, address, lifetime_value, notes, created_at, updated_at)
@@ -276,9 +427,12 @@ export async function importCsv(
           nowIso()
         )
         .run()
+      dup.add("customers", { name, phone: values.phone })
       imported++
     }
   }
+
+  }) // end withTransaction — the import is atomic: all rows or none
 
   await db
     .prepare(
@@ -293,10 +447,19 @@ export async function importCsv(
     entityType: "import_batch",
     entityId: batchId,
     action: "csv_imported",
-    detail: `${kind} import from ${filename}: ${imported} of ${records.length} rows imported${ctx.errors.length ? `, ${ctx.errors.length} skipped` : ""}.`
+    detail: `${kind} import from ${filename}: ${imported} of ${records.length} rows imported${duplicates ? `, ${duplicates} duplicates skipped` : ""}${ctx.errors.length ? `, ${ctx.errors.length} invalid` : ""}.`
   })
 
-  return { batch_id: batchId, kind, row_count: records.length, imported, skipped: records.length - imported, errors: ctx.errors.slice(0, 20) }
+  return {
+    batch_id: batchId,
+    kind,
+    row_count: records.length,
+    imported,
+    skipped: records.length - imported,
+    duplicates,
+    duplicate_rule: DuplicateTracker.RULES[kind],
+    errors: ctx.errors.slice(0, 20)
+  }
 }
 
 /** Export all company data as JSON (privacy: data portability). */
@@ -310,26 +473,29 @@ export async function exportAllData(db: Database): Promise<Record<string, unknow
   return out
 }
 
-/** Delete all company data (privacy: right to deletion). Audit record first, then wipe. */
+/** Delete all company data (privacy: right to deletion). Audit record first, then wipe — atomically. */
 export async function deleteAllData(db: Database): Promise<{ ok: true; deleted: boolean }> {
-  await audit(db, {
-    actor: "owner",
-    entityType: "system",
-    action: "data_deletion_requested",
-    detail: "All company data deleted at owner request. Audit event recorded before wipe."
+  await withTransaction(db, async () => {
+    await audit(db, {
+      actor: "owner",
+      entityType: "system",
+      action: "data_deletion_requested",
+      detail: "All company data deleted at owner request. Audit event recorded before wipe."
+    })
+    const tables = ["revenue_events", "audit_events", "human_tasks", "satisfaction_events", "referrals", "import_batches", "recovery_opportunities", "enquiries", "company_settings", "missed_calls", "reactivations", "estimates", "appointments", "followups", "messages", "conversations", "customers", "leads", "companies"]
+    for (const t of tables) {
+      await db.prepare(`DELETE FROM ${t}`).run()
+    }
   })
-  const tables = ["audit_events", "human_tasks", "satisfaction_events", "referrals", "import_batches", "recovery_opportunities", "enquiries", "company_settings", "missed_calls", "reactivations", "estimates", "appointments", "followups", "messages", "conversations", "customers", "leads", "companies"]
-  for (const t of tables) {
-    await db.prepare(`DELETE FROM ${t}`).run()
-  }
   return { ok: true, deleted: true }
 }
 
-export async function getSettings(db: Database): Promise<{ region: string; currency: string; date_format: string; retention_days: number; data_source: string | null; company: Record<string, unknown> | null }> {
+export async function getSettings(db: Database): Promise<{ region: string; currency: string; date_format: string; retention_days: number; data_source: string | null; workspace_kind: WorkspaceKind; company: Record<string, unknown> | null }> {
   const s = (await db
-    .prepare(`SELECT region, currency, date_format, retention_days, data_source FROM company_settings WHERE company_id = ?1`)
+    .prepare(`SELECT region, currency, date_format, retention_days, data_source, workspace_kind FROM company_settings WHERE company_id = ?1`)
     .bind(COMPANY_ID)
     .first<Record<string, unknown>>()) ?? {}
+  const workspaceKind = await getWorkspaceKind(db)
   const c = (await db
     .prepare(`SELECT id, name, city, state, phone, website, avg_ticket FROM companies WHERE id = ?1`)
     .bind(COMPANY_ID)
@@ -340,6 +506,7 @@ export async function getSettings(db: Database): Promise<{ region: string; curre
     date_format: String(s.date_format ?? "MDY"),
     retention_days: Number(s.retention_days ?? 365),
     data_source: s.data_source ? String(s.data_source) : null,
+    workspace_kind: workspaceKind,
     company: c
   }
 }

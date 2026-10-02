@@ -78,6 +78,7 @@ interface DashboardData {
   company: { name: string; city: string; state: string }
   revenue_recovered: number
   revenue_recovered_count: number
+  revenue_recovered_basis?: { opportunity: number; recorded: number; assumed: number; analytical: number }
   revenue_at_risk: number
   revenue_at_risk_count: number
   qualified_leads: number
@@ -171,8 +172,11 @@ export default function Dashboard() {
           <div className="metric-serif mt-3 text-4xl leading-none text-emerald-300 sm:text-5xl" data-testid="metric-recovered">
             {usd(data.revenue_recovered)}
           </div>
-          <div className="mt-3 text-[11px] uppercase tracking-[0.14em] text-mist-400">
-            {data.revenue_recovered_count} jobs · recorded outcomes only
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-mist-400">
+            <span>{data.revenue_recovered_count} jobs</span>
+            <span className="chip border-ink-700 bg-ink-850 text-mist-400">
+              ledger · {usd(data.revenue_recovered_basis?.recorded ?? 0)} recorded · {usd(data.revenue_recovered_basis?.assumed ?? 0)} assumed
+            </span>
           </div>
           <span className="absolute left-0 top-0 h-8 w-0.5 bg-emerald-300/70" aria-hidden="true" />
         </div>

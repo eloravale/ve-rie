@@ -20,7 +20,8 @@ Read this from your phone. Everything below works on the live demo — no prepar
 
 1. **Open the live URL** (bookmark it on your phone home screen).
 2. **Dashboard** — point at the two headline numbers:
-   - *Revenue recovered: $22,800* ("this is money that came back")
+   - *Revenue recovered: $22,400* ("this is money that came back — the ledger
+     shows $16,000 we assumed from estimates and $6,400 recorded outcomes")
    - *Revenue at risk: $44,740* ("this is money walking out the door right now")
    - Say: "Everything on this screen comes from one question — what is this business losing, and why?"
 3. **Owner Daily Brief** (same page) — "Every morning the owner gets five ranked actions with dollar values. This is the whole product in one card."
@@ -45,7 +46,7 @@ Close: "This is exactly what VÉRIA would watch for your company. Want me to run
 
 **Minute 4 — recovery in action.** Go to **Missed-Call Recovery**. Tap **Start recovery** on the top call. Show what appears: a lead is created, an owner call-back task appears, the audit trail records it. "Notice — VÉRIA doesn't pretend to be autonomous. Anything personal goes to the owner as a task with a value and a priority. That's deliberate: homeowners want a human to call them back."
 
-**Minute 5 — the money.** Open **Demo Mode** and run the guided steps, or just return to the dashboard. "Recovered $22,800, at-risk $44,740. In a real deployment, this dashboard watches your phone line, your web forms, and your estimate list 24/7. The average customer we model recovers $2–6k/month. What would that be worth at your volume?"
+**Minute 5 — the money.** Open **Demo Mode** and run the guided steps, or just return to the dashboard. "Recovered $22,400, at-risk $44,740. In a real deployment, this dashboard watches your phone line, your web forms, and your estimate list 24/7. The average customer we model recovers $2–6k/month. What would that be worth at your volume?"
 
 ---
 
@@ -95,7 +96,8 @@ The demo environment IS the sample audit. The close: "Imagine this dashboard fil
 4. Missed Calls → Start recovery
 5. Tasks (owner handoff completed)
 6. Dashboard again (recovered number moved)
-7. Demo Mode → Reset before the NEXT prospect (one tap)
+7. Demo Mode → Reset before the NEXT prospect (one tap — reset is refused on
+   non-demo workspaces, so it can never touch a pilot customer's data)
 
 ---
 
@@ -126,4 +128,4 @@ The demo environment IS the sample audit. The close: "Imagine this dashboard fil
 
 ---
 
-*Tip: before each demo, open Demo Mode → Reset. Fresh numbers, full radar, clean story.*
+*Tip: before each demo, open Demo Mode → Reset. Fresh numbers, full radar, clean story. The recovered headline comes from one canonical ledger — the same number on every screen, with recorded vs assumed money disclosed.*

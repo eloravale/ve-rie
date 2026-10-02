@@ -36,8 +36,33 @@ Status: **SELLABLE DEMO MVP** — ready for customer demonstrations and a paid p
 ### Platform
 - TypeScript + React + Vite + Tailwind frontend; Cloudflare Worker + D1 backend
 - Runs identically on Node (no cloud account) via the same Worker code on node:sqlite
-- 28 passing tests (score engine, validation, full API workflow)
+- 102 passing tests (score engine, validation, full API workflow, Phase 0 truth/idempotency/guardrail suite)
 - Mobile-responsive demo path (bottom nav, cards instead of tables, tappable targets)
+
+### Phase 0 — Foundation & Truth (economic integrity layer)
+- **Canonical revenue ledger** (`revenue_events`): one authoritative record of recovery
+  events; every recovered-revenue figure in the product derives from it
+  (see [ADR-001](ADR-001-canonical-revenue-ledger.md))
+- **Value basis on every dollar**: `recorded` (owner/source-proven) vs `assumed`
+  (defaulted from estimates) vs `opportunity`/`analytical` — disclosed on the dashboard;
+  historical demo recoveries are honestly labelled `assumed`
+- **Idempotent writes**: deterministic `event_key` per economic event — retries and
+  double-submits can never create a second dollar
+- **Deterministic opportunity identity** (`identity_key` + partial UNIQUE index): sync is
+  idempotent at the database level; the seed is a sync fixed point (first sync creates 0)
+- **Double-count elimination**: one open opportunity per underlying problem (handoff vs
+  quote vs lead no longer counts the same job twice; ~$29k of phantom overlap removed)
+- **Workspace separation**: `demo` / `prospect` / `customer` kinds; demo reset is
+  refused with HTTP 409 on non-demo workspaces
+- **Token-guarded destructive routes**: `POST /api/demo/reset` and `POST /api/data/delete`
+  require `x-admin-token` when protected mode is on (`VERIA_ADMIN_TOKEN` or
+  `VERIA_PROTECTED_MODE=1`, fail-closed)
+- **CORS allowlist** via `VERIA_ALLOWED_ORIGINS` (localhost dev works by default)
+- **Referential integrity**: `PRAGMA foreign_keys = ON` in the local server and all test harnesses
+- **Atomic operations**: demo reset, CSV imports, and data deletion run in transactions —
+  a failure rolls back cleanly, never half-writes
+- **CSV import duplicate detection**: per-kind rules (name+phone, phone+date,
+  customer+amount+date); duplicates are skipped and reported, never imported twice
 
 ---
 

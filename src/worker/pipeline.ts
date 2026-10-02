@@ -15,6 +15,7 @@ import { audit } from "./audit"
 import { ValidationError } from "./validation"
 import { money } from "./region"
 import { classifyJobType } from "./jobTypes"
+import { recordRecovered, ledgerRecoveredSummary } from "./ledger"
 
 export const DAY = 86_400_000
 
@@ -144,11 +145,12 @@ interface OpportunityRow {
   last_event_at: string | null
   outcome_type?: string | null
   recovered_value?: number | null
+  identity_key?: string | null
   created_at: string
   updated_at: string
 }
 
-const SELECT_RO = `id, source_type, source_id, lead_id, customer_name, job_type, category, title, why,
+const SELECT_RO = `id, source_type, source_id, identity_key, lead_id, customer_name, job_type, category, title, why,
   recommended_action, estimated_value, stage, priority, owner, age_days, last_event_at,
   outcome_type, recovered_value, created_at, updated_at`
 
@@ -171,8 +173,26 @@ const CATEGORY_BY_SOURCE: Record<string, string> = {
 }
 
 /**
+ * Deterministic opportunity identity — the same rule the 0005/0006 migrations
+ * use for their backfill, so a database seeded by migration is byte-identical
+ * to a database produced by sync. With a source row the identity is the
+ * (source_type, source_id) pair; without one it falls back to the normalized
+ * customer name so owner-created rows still get a stable identity.
+ */
+export function identityKeyFor(sourceType: string, sourceId: string | null | undefined, customerName: string): string {
+  if (sourceId) return `${sourceType}:${sourceId}`
+  return `${sourceType}:cust:${String(customerName ?? "").trim().toLowerCase()}`
+}
+
+/**
  * Materialize today's leakage into recovery_opportunities.
- * Idempotent: skips source rows already represented by an OPEN opportunity.
+ * Idempotent at TWO levels:
+ *  1. App level — skips source rows already represented by an OPEN opportunity
+ *     (by source identity, and for handoffs by lead/customer across types).
+ *  2. Database level — INSERT .. ON CONFLICT DO NOTHING against the partial
+ *     UNIQUE(identity_key) index, so a retried or raced sync can never create
+ *     a second opportunity for the same identity. A pristine seeded database
+ *     is a fixed point: sync on it creates exactly 0 rows.
  * Never touches manually advanced or closed opportunities.
  */
 export async function syncOpportunities(db: Database): Promise<{ created: number }> {
@@ -180,10 +200,16 @@ export async function syncOpportunities(db: Database): Promise<{ created: number
   const nowStr = nowIso()
   const existing = await listOpportunities(db)
   const openBySource = new Map<string, OpportunityRow>()
+  const openByIdentity = new Set<string>()
+  const openByLead = new Map<string, OpportunityRow>()
+  const openByName = new Set<string>()
   for (const o of existing) {
-    if (o.stage !== "recovered" && o.stage !== "lost" && o.source_id) {
-      openBySource.set(`${o.source_type}:${o.source_id}`, o)
-    }
+    if (o.stage === "recovered" || o.stage === "lost") continue
+    if (o.source_id) openBySource.set(`${o.source_type}:${o.source_id}`, o)
+    openByIdentity.add(o.identity_key || identityKeyFor(o.source_type, o.source_id, o.customer_name))
+    if (o.lead_id) openByLead.set(o.lead_id, o)
+    const n = String(o.customer_name ?? "").trim().toLowerCase()
+    if (n) openByName.add(n)
   }
   let created = 0
 
@@ -213,18 +239,21 @@ export async function syncOpportunities(db: Database): Promise<{ created: number
 
   const insert = async (o: Omit<OpportunityRow, "id" | "created_at" | "updated_at">): Promise<void> => {
     const id = newId("rop")
-    await db
+    const identityKey = identityKeyFor(o.source_type, o.source_id, o.customer_name)
+    const ins = await db
       .prepare(
-        `INSERT INTO recovery_opportunities (id, company_id, source_type, source_id, lead_id, customer_name, job_type,
+        `INSERT INTO recovery_opportunities (id, company_id, source_type, source_id, identity_key, lead_id, customer_name, job_type,
           category, title, why, recommended_action, estimated_value, stage, priority, owner, age_days, last_event_at,
           created_at, updated_at)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?18)`
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?19)
+         ON CONFLICT DO NOTHING RETURNING id`
       )
       .bind(
-        id, COMPANY_ID, o.source_type, o.source_id, o.lead_id, o.customer_name, o.job_type, o.category, o.title,
+        id, COMPANY_ID, o.source_type, o.source_id, identityKey, o.lead_id, o.customer_name, o.job_type, o.category, o.title,
         o.why, o.recommended_action, o.estimated_value, o.stage, o.priority, o.owner, o.age_days, o.last_event_at, nowStr
       )
-      .run()
+      .all<{ id: string }>()
+    if (!ins.results || ins.results.length === 0) return // identity already present — idempotent no-op
     created++
     await audit(db, {
       entityType: "recovery_opportunity",
@@ -347,6 +376,9 @@ export async function syncOpportunities(db: Database): Promise<{ created: number
     if (missedPhoneSet.size > 0 && missedPhoneSet.has(normalizePhone(l.phone))) {
       continue // an open missed-call opportunity already covers this customer — never count twice
     }
+    if (openByLead.has(String(l.id))) {
+      continue // an open opportunity (e.g. the lead's quote or slow response) already covers this job — one card per problem
+    }
     if (l.next_action_at && tsToMs(String(l.next_action_at)) > now) continue // already scheduled forward
     const idle = daysBetween(l.last_activity_at ? String(l.last_activity_at) : String(l.created_at), now)
     const isSlow = idle >= 2 && idle < 30
@@ -428,8 +460,17 @@ export async function syncOpportunities(db: Database): Promise<{ created: number
   for (const t of taskRes.results ?? []) {
     const sid = `handoff:${String(t.id)}`
     if (openBySource.has(sid)) continue
+    if (openByIdentity.has(identityKeyFor("handoff", String(t.id), ""))) continue
     const waiting = daysBetween(t.created_at ? String(t.created_at) : null, now)
     if (waiting < 2) continue // fresh handoffs are fine
+    // Cross-type double-count guard: if this task's lead or customer already
+    // has ANY open opportunity (e.g. their unfollowed quote, a slow response),
+    // the handoff must not create a second opportunity for the same problem.
+    if (t.lead_id && openByLead.has(String(t.lead_id))) continue
+    if (t.lead_name) {
+      const n = String(t.lead_name).trim().toLowerCase()
+      if (n && openByName.has(n)) continue
+    }
     const name = t.lead_name ? String(t.lead_name) : "Owner task"
     await insert({
       source_type: "handoff",
@@ -519,6 +560,22 @@ export async function advanceOpportunity(
     )
     .bind(id, COMPANY_ID, to, outcome, recoveredValue, lastEvent ?? nowStr, nowStr)
     .run()
+
+  // Canonical ledger: an explicitly recorded recovery outcome is THE moment
+  // recovered revenue exists. One economic event per opportunity, ever
+  // (deterministic event_key). Owner-supplied value = recorded money;
+  // a value defaulted from the estimate = assumed (never presented as proven).
+  if (countedAsRecovered) {
+    const ownerSupplied = typeof body.recovered_value === "number" && body.recovered_value > 0
+    await recordRecovered(db, {
+      opportunityId: id,
+      value: recoveredValue ?? 0,
+      valueBasis: ownerSupplied ? "recorded" : "assumed",
+      outcomeType: outcome ?? "recovery_recorded",
+      actor: "owner",
+      evidenceRef: `advance:${id}`
+    })
+  }
 
   // Keep linked records coherent (demo-safe: no customer messages are ever sent).
   if (to === "booked" && opp.lead_id) {
@@ -812,9 +869,11 @@ export async function computeRecoveryScore(db: Database, now: number = Date.now(
 
 export async function buildImpact(db: Database): Promise<ImpactMetrics> {
   const opps = await listOpportunities(db)
+  // Recovered revenue comes ONLY from the canonical ledger — the single source
+  // of truth for money actually recorded as recovered (with its value basis).
+  const ledger = await ledgerRecoveredSummary(db)
   const identified = opps
   const actioned = opps.filter((o) => ["contacted", "responded", "qualified", "booked", "recovered"].includes(o.stage))
-  const recovered = opps.filter((o) => o.stage === "recovered")
   const open = opps.filter((o) => !["recovered", "lost"].includes(o.stage))
   const lost = opps.filter((o) => o.stage === "lost")
   const sum = (rows: OpportunityRow[], key: "estimated_value" | "recovered_value" = "estimated_value") =>
@@ -825,14 +884,14 @@ export async function buildImpact(db: Database): Promise<ImpactMetrics> {
     identified_count: identified.length,
     actioned_value: sum(actioned),
     actioned_count: actioned.length,
-    recovered_value: sum(recovered, "recovered_value"),
-    recovered_count: recovered.length,
+    recovered_value: ledger.recovered_revenue,
+    recovered_count: ledger.recovered_events,
     still_open_value: sum(open),
     still_open_count: open.length,
     lost_value: sum(lost),
     lost_count: lost.length,
     action_rate: identified.length ? actioned.length / identified.length : 0,
-    recovery_rate: actioned.length ? recovered.length / actioned.length : 0,
+    recovery_rate: actioned.length ? ledger.recovered_events / actioned.length : 0,
     illustrative: true
   }
 }

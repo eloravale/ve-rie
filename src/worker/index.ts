@@ -29,7 +29,8 @@ import {
   runReactivation,
   updateHumanTask
 } from "./recovery"
-import { resetDemo } from "./demo"
+import { resetDemo, getWorkspace, WorkspaceGuardError } from "./demo"
+import { recordRecovered, ledgerRecoveredSummary, recordLedgerEvent, recoveryEventKey, LedgerIntegrityError, LEDGER_KINDS, LEDGER_VALUE_BASES } from "./ledger"
 import {
   syncOpportunities,
   advanceOpportunity,
@@ -66,29 +67,114 @@ export {
   RECOVERY_OUTCOMES
 } from "./pipeline"
 export { buildEvidence, buildDataQuality, buildCalibration, buildRevenueWatch } from "./intel"
-export { resetDemo } from "./demo"
+export { resetDemo, getWorkspace, WorkspaceGuardError } from "./demo"
+// Intentional single-bundle export surface for tests and tooling.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export { recordRecovered, ledgerRecoveredSummary, recordLedgerEvent, recoveryEventKey, LEDGER_KINDS, LEDGER_VALUE_BASES } from "./ledger"
+export { identityKeyFor } from "./pipeline"
 
 export interface Env {
   DB: Database
   ASSETS: { fetch(request: Request): Promise<Response> }
+  /** When set (and protected mode is not disabled), destructive routes require `x-admin-token`. */
+  VERIA_ADMIN_TOKEN?: string
+  /** "1" forces protected mode even without a token (fail-closed); "0" disables it for local dev. */
+  VERIA_PROTECTED_MODE?: string
+  /** Comma-separated CORS allowlist. Empty/unset allows localhost dev origins only. */
+  VERIA_ALLOWED_ORIGINS?: string
 }
 
-const CORS_HEADERS: Record<string, string> = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, PATCH, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type"
+// ---------------------------------------------------------------------------
+// CORS — configurable allowlist (spec §security). Default keeps local dev
+// working (localhost/127.0.0.1 on any port); production sets
+// VERIA_ALLOWED_ORIGINS to the exact origins that may call the API.
+// ---------------------------------------------------------------------------
+const DEFAULT_ALLOWED_ORIGIN_SUFFIXES = ["localhost", "127.0.0.1", "[::1]"]
+const DEV_PORTS = new Set(["5173", "4173", "8787", "3000"])
+
+type CorsEnv = { VERIA_ALLOWED_ORIGINS?: string }
+
+function allowedOrigins(env: CorsEnv): string[] {
+  return (env.VERIA_ALLOWED_ORIGINS ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
 }
+
+function originAllowed(origin: string, env: CorsEnv): boolean {
+  if (allowedOrigins(env).includes(origin)) return true
+  try {
+    const u = new URL(origin)
+    const isLocalDev =
+      DEFAULT_ALLOWED_ORIGIN_SUFFIXES.includes(u.hostname) &&
+      (DEV_PORTS.has(u.port) || u.port === "")
+    return isLocalDev
+  } catch {
+    return false
+  }
+}
+
+class Cors {
+  constructor(private origin: string | null, private env: CorsEnv = {}) {}
+
+  headers(): Record<string, string> {
+    const base: Record<string, string> = {
+      "Access-Control-Allow-Methods": "GET, POST, PATCH, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, x-admin-token",
+      Vary: "Origin"
+    }
+    if (this.origin && originAllowed(this.origin, this.env)) {
+      base["Access-Control-Allow-Origin"] = this.origin
+    }
+    return base
+  }
+}
+
+// Single-request execution context: Workers isolate per request and the local
+// Node server handles requests sequentially, so carrying the request's CORS
+// context here is safe in both runtimes.
+let CORS_CURRENT: Cors = new Cors(null, {})
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data, null, 2), {
     status,
-    headers: { "Content-Type": "application/json; charset=utf-8", ...CORS_HEADERS }
+    headers: { "Content-Type": "application/json; charset=utf-8", ...CORS_CURRENT.headers() }
   })
+}
+
+/**
+ * Destructive-route guard (spec §security): POST /api/demo/reset and
+ * POST /api/data/delete require the admin token whenever protected mode is on.
+ * Protected mode is ON when a token is configured (unless VERIA_PROTECTED_MODE=0)
+ * or when VERIA_PROTECTED_MODE=1 (fail-closed, even without a token configured).
+ * Tokens are compared with a length-independent equality check; they are never
+ * logged or echoed.
+ */
+function requireAdmin(request: Request, env: Env): Response | null {
+  const token = env.VERIA_ADMIN_TOKEN ?? ""
+  const protectedMode = env.VERIA_PROTECTED_MODE === "1" || (token.length > 0 && env.VERIA_PROTECTED_MODE !== "0")
+  if (!protectedMode) return null
+  const supplied = request.headers.get("x-admin-token") ?? ""
+  if (token.length > 0 && supplied.length === token.length && supplied === token) return null
+  return json(
+    {
+      error:
+        "Admin token required for this operation. Configure VERIA_ADMIN_TOKEN and send it as the `x-admin-token` header.",
+      code: "admin_token_required"
+    },
+    401
+  )
 }
 
 function errorResponse(e: unknown): Response {
   if (e instanceof ValidationError) {
     return json({ error: e.message, fields: e.fields }, e.status)
+  }
+  if (e instanceof WorkspaceGuardError) {
+    return json({ error: e.message, workspace_kind: e.workspaceKind, code: "workspace_guard" }, e.status)
+  }
+  if (e instanceof LedgerIntegrityError) {
+    return json({ error: e.message, code: "ledger_integrity" }, e.status)
   }
   const message = e instanceof Error ? e.message : "Internal error"
   console.error("[veria] unhandled error:", message)
@@ -110,7 +196,8 @@ export default {
     const path = url.pathname
     const method = request.method
 
-    if (method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS })
+    CORS_CURRENT = new Cors(request.headers.get("Origin"), env)
+    if (method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_CURRENT.headers() })
 
     if (!path.startsWith("/api/")) {
       // Static assets (Cloudflare Workers assets binding).
@@ -125,8 +212,16 @@ export default {
       const db = env.DB
 
       // ---------- demo mode ----------
+      // Destructive routes are token-guarded whenever protected mode is on.
       if (method === "POST" && path === "/api/demo/reset") {
+        const denied = requireAdmin(request, env)
+        if (denied) return denied
         return json(await resetDemo(db))
+      }
+
+      // ---------- workspace ----------
+      if (method === "GET" && path === "/api/workspace") {
+        return json(await getWorkspace(db))
       }
 
       // ---------- meta ----------
@@ -301,6 +396,8 @@ export default {
       }
 
       if (method === "POST" && path === "/api/data/delete") {
+        const denied = requireAdmin(request, env)
+        if (denied) return denied
         return json(await deleteAllData(db))
       }
 

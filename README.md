@@ -54,9 +54,30 @@ reactivation opportunities, owner tasks, and audit events. All data is
 simulated. Demo Mode (in-app) can reset the environment to pristine state at
 any time via `POST /api/demo/reset`.
 
+Recovered revenue is tracked in a **canonical revenue ledger** (`revenue_events`)
+with an explicit value basis on every row — assumed demo history is labelled
+assumed, owner-recorded outcomes are labelled recorded (see
+[docs/ADR-001-canonical-revenue-ledger.md](docs/ADR-001-canonical-revenue-ledger.md)).
+The seeded workspace is a **sync fixed point**: running opportunity sync on a
+fresh reset creates exactly zero new opportunities.
+
+Workspace safety & configuration
+--------------------------------
+
+- Each workspace records its kind (`demo` / `prospect` / `customer`, see
+  `GET /api/workspace`). Demo reset is **refused with HTTP 409** on non-demo
+  workspaces — customer data can never be wiped by a demo reset.
+- `POST /api/demo/reset` and `POST /api/data/delete` require the admin token
+  (header `x-admin-token`) whenever `VERIA_ADMIN_TOKEN` is configured, or when
+  `VERIA_PROTECTED_MODE=1` (fail-closed).
+- CORS is allowlist-based: localhost dev origins work out of the box; set
+  `VERIA_ALLOWED_ORIGINS=https://app.yourdomain.com` in production.
+- Secrets live in the environment (`VERIA_ADMIN_TOKEN`) — never in the repo.
+
 Docs
 ----
 
 - docs/SALES_DEMO.md — founder's demo script and objection handling
 - docs/MVP_SCOPE.md — what VÉRIA does, simulates, and does not do yet
 - docs/NEXT_PHASES.md — post-validation roadmap
+- docs/ADR-001-canonical-revenue-ledger.md — why every recovered dollar has one ledger row and an explicit value basis

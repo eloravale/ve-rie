@@ -74,6 +74,9 @@ beforeAll(async () => {
   tmpDb = path.join(os.tmpdir(), `veria-test-${Date.now()}.db`)
   db = new DatabaseSync(tmpDb)
   db.exec("PRAGMA journal_mode = MEMORY;")
+  // Phase 0: referential integrity enforced in test harnesses too (parity with
+  // server.mjs and production D1).
+  db.exec("PRAGMA foreign_keys = ON;")
   const migrationsDir = path.join(ROOT, "migrations")
   db.exec("CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)")
   for (const f of fs.readdirSync(migrationsDir).filter((x) => x.endsWith(".sql")).sort()) {

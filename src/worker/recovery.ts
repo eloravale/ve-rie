@@ -1,5 +1,6 @@
 import { COMPANY_ID, newId, nowIso, type Database } from "./db"
 import { audit } from "./audit"
+import { ledgerRecoveredSummary, recordRecovered } from "./ledger"
 import { opportunityScore } from "./score"
 import { ValidationError, idOrNull, nonNegativeNumber, optionalString } from "./validation"
 import type { Followup, Lead } from "./types"
@@ -45,6 +46,8 @@ export interface DashboardMetrics {
   company: { id: string; name: string; city: string; state: string; phone: string; website: string; avg_ticket: number }
   revenue_recovered: number
   revenue_recovered_count: number
+  /** Epistemic breakdown of revenue_recovered — assumed money is never presented as recorded money. */
+  revenue_recovered_basis: { opportunity: number; recorded: number; assumed: number; analytical: number }
   revenue_at_risk: number
   revenue_at_risk_count: number
   qualified_leads: number
@@ -378,8 +381,11 @@ export async function buildDashboard(db: Database): Promise<DashboardMetrics> {
     .bind(COMPANY_ID)
     .first<Record<string, unknown>>()
 
-  const won = leads.filter((l) => l.status === "won")
-  const revenueRecovered = won.reduce((s, l) => s + l.estimated_value, 0)
+  // Recovered revenue comes ONLY from the canonical ledger (kind='recovered').
+  // Before Phase 0 this summed status='won' leads — a different, overlapping
+  // definition (routine wins included, some recoveries missing) that produced
+  // a different headline than the recovery pipeline. One ledger, one truth.
+  const ledger = await ledgerRecoveredSummary(db)
 
   const atRiskLeads = leads.filter((l) => isAtRisk(l, now))
   const revenueAtRisk = atRiskLeads.reduce((s, l) => s + l.estimated_value, 0)
@@ -421,8 +427,9 @@ export async function buildDashboard(db: Database): Promise<DashboardMetrics> {
       website: String(companyRow?.website ?? ""),
       avg_ticket: Number(companyRow?.avg_ticket ?? 4800)
     },
-    revenue_recovered: revenueRecovered,
-    revenue_recovered_count: won.length,
+    revenue_recovered: ledger.recovered_revenue,
+    revenue_recovered_count: ledger.recovered_events,
+    revenue_recovered_basis: ledger.by_basis,
     revenue_at_risk: revenueAtRisk,
     revenue_at_risk_count: atRiskLeads.length,
     qualified_leads: leads.filter((l) => l.status === "qualified").length,
@@ -594,7 +601,20 @@ export async function completeFollowup(db: Database, id: string, body: Record<st
   const lead = await getLead(db, fu.lead_id)
   if (lead) {
     if (outcome === "recovered") {
-      await updateLead(db, lead.id, { status: "won", estimated_value: lead.estimated_value || 4800 })
+      const wonValue = lead.estimated_value || 4800
+      await updateLead(db, lead.id, { status: "won", estimated_value: wonValue })
+      // Canonical ledger: an explicitly recovered follow-up is recorded money
+      // (owner recorded the outcome). Deterministic per follow-up id — a
+      // retried completion can never write a second recovery event.
+      await recordRecovered(db, {
+        opportunityId: null,
+        value: wonValue,
+        valueBasis: "recorded",
+        outcomeType: outcome,
+        actor: "owner",
+        evidenceRef: `followup:${id}`,
+        eventKey: `rev_${COMPANY_ID}:fu_${id}:recovered`
+      })
     } else if (outcome === "lost") {
       await updateLead(db, lead.id, { status: "lost" })
     } else if (lead.status === "new") {

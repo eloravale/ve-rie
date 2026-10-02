@@ -15,3 +15,7 @@ migrations_dir = "migrations"
 
 [vars]
 VERIA_DEMO_MODE = "true"
+# Phase 0: configure before any customer-facing deployment.
+# VERIA_ALLOWED_ORIGINS = "https://app.yourdomain.com"
+# Secrets (VERIA_ADMIN_TOKEN) belong in `wrangler secret put VERIA_ADMIN_TOKEN`,
+# never in this file. VERIA_PROTECTED_MODE=1 forces fail-closed destructive routes.
