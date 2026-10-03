@@ -29,7 +29,7 @@ import {
   runReactivation,
   updateHumanTask
 } from "./recovery"
-import { resetDemo, getWorkspace, WorkspaceGuardError } from "./demo"
+import { resetDemo, getWorkspace, startProspectWorkspace, WorkspaceGuardError } from "./demo"
 import { recordRecovered, ledgerRecoveredSummary, recordLedgerEvent, recoveryEventKey, LedgerIntegrityError, LEDGER_KINDS, LEDGER_VALUE_BASES } from "./ledger"
 import {
   syncOpportunities,
@@ -67,7 +67,7 @@ export {
   RECOVERY_OUTCOMES
 } from "./pipeline"
 export { buildEvidence, buildDataQuality, buildCalibration, buildRevenueWatch } from "./intel"
-export { resetDemo, getWorkspace, WorkspaceGuardError } from "./demo"
+export { resetDemo, getWorkspace, startProspectWorkspace, WorkspaceGuardError } from "./demo"
 // Intentional single-bundle export surface for tests and tooling.
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export { recordRecovered, ledgerRecoveredSummary, recordLedgerEvent, recoveryEventKey, LEDGER_KINDS, LEDGER_VALUE_BASES } from "./ledger"
@@ -222,6 +222,19 @@ export default {
       // ---------- workspace ----------
       if (method === "GET" && path === "/api/workspace") {
         return json(await getWorkspace(db))
+      }
+
+      // Prospect Mode entry: clears synthetic demo data and switches the
+      // workspace to 'prospect' (destructive → same token guard as reset).
+      if (method === "POST" && path === "/api/prospect/start") {
+        const denied = requireAdmin(request, env)
+        if (denied) return denied
+        const body = await readBody(request)
+        return json(
+          await startProspectWorkspace(db, {
+            companyName: typeof body.company_name === "string" ? body.company_name : undefined
+          })
+        )
       }
 
       // ---------- meta ----------

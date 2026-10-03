@@ -1,8 +1,9 @@
-import React, { useRef, useState } from "react"
+import React, { useEffect, useRef, useState } from "react"
 import { api, ApiError } from "../api"
 import { nav } from "../App"
-import { Section, SimulatedTag } from "../ui"
+import { Section } from "../ui"
 import { SectionIndex } from "../brand"
+import { invalidateSettings } from "../use-settings"
 
 interface MappingPreview {
   kind: string
@@ -11,6 +12,21 @@ interface MappingPreview {
   row_count: number
   suggested_mapping: Record<string, string>
   sample: { values: Record<string, string>; ignored: Record<string, string> }[]
+}
+
+interface CommitResult {
+  row_count: number
+  imported: number
+  skipped: number
+  duplicates: number
+  duplicate_rule: string
+  errors: string[]
+}
+
+const WORKSPACE_LABEL: Record<string, string> = {
+  demo: "Illustrative demo data",
+  prospect: "Imported prospect data",
+  customer: "Customer data"
 }
 
 const KINDS: { key: string; label: string; hint: string }[] = [
@@ -51,13 +67,64 @@ export default function Prospect() {
   const [mapping, setMapping] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [done, setDone] = useState<string | null>(null)
+  const [result, setResult] = useState<CommitResult | null>(null)
+  const [workspace, setWorkspace] = useState<string | null>(null)
+  const [companyName, setCompanyName] = useState("")
+  const [startNote, setStartNote] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+
+  // Workspace state drives step 0: demo workspaces must be switched to a clean
+  // prospect workspace before importing (keeps demo and prospect data separate).
+  useEffect(() => {
+    api
+      .get<{ workspace_kind: string }>("/api/workspace")
+      .then((w) => setWorkspace(w.workspace_kind))
+      .catch(() => setWorkspace("demo"))
+    api
+      .get<{ workspace_kind?: string; company: { name: string } | null }>("/api/settings")
+      .then((s) => {
+        // Step 0's input must start BLANK in a demo workspace: a prospect
+        // workspace can never inherit the fictional demo company name (spec §3).
+        if (s.workspace_kind && s.workspace_kind !== "demo") setCompanyName(s.company?.name ?? "")
+      })
+      .catch(() => undefined)
+  }, [])
+
+  const startProspect = async () => {
+    setBusy("start")
+    setError(null)
+    setStartNote(null)
+    try {
+      const res = await api.post<{ workspace_kind: string; company_name: string }>("/api/prospect/start", {
+        company_name: companyName || undefined
+      })
+      setWorkspace(res.workspace_kind)
+      setCompanyName(res.company_name)
+      invalidateSettings()
+      setStartNote(
+        `Prospect workspace ready for “${res.company_name}”. The synthetic demo data has been cleared and demo reset is now locked for this workspace, so imported prospect data cannot be wiped.`
+      )
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Could not start the prospect workspace")
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const renameCompany = async (name: string) => {
+    setCompanyName(name)
+    try {
+      await api.patch("/api/settings", { company_name: name })
+      invalidateSettings()
+    } catch {
+      /* rename is applied on next successful save */
+    }
+  }
 
   const analyze = async (rawCsv: string, fname: string, k: string) => {
     setBusy("preview")
     setError(null)
-    setDone(null)
+    setResult(null)
     try {
       const res = await api.post<MappingPreview>("/api/imports/preview", { kind: k, filename: fname, csv: rawCsv })
       setPreview(res)
@@ -74,7 +141,7 @@ export default function Prospect() {
     if (!f) return
     setFilename(f.name)
     setPreview(null)
-    setDone(null)
+    setResult(null)
     const reader = new FileReader()
     reader.onload = () => {
       const text = String(reader.result ?? "")
@@ -89,20 +156,15 @@ export default function Prospect() {
     setBusy("commit")
     setError(null)
     try {
-      const res = await api.post<{ imported: number; row_count: number; skipped: number; errors: string[] }>(
-        "/api/imports/commit",
-        {
-          kind,
-          filename: preview.filename,
-          csv,
-          mapping
-        }
-      )
-      const skippedNote = res.skipped > 0 ? ` (${res.skipped} skipped)` : ""
-      const errorLines = res.errors.length ? ` Skipped: ${res.errors.join(" · ")}` : ""
-      setDone(
-        `Imported ${res.imported} of ${res.row_count} rows${skippedNote}.${errorLines} Run a sync on the Recovery Pipeline to materialize opportunities from this data.`
-      )
+      const res = await api.post<CommitResult>("/api/imports/commit", {
+        kind,
+        filename: preview.filename,
+        csv,
+        mapping
+      })
+      // No row is ever silently discarded: read / imported / duplicates /
+      // rejected-with-reasons are all reported.
+      setResult(res)
       setPreview(null)
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Import failed")
@@ -114,10 +176,12 @@ export default function Prospect() {
   const resetAll = () => {
     setCsv(null)
     setPreview(null)
-    setDone(null)
+    setResult(null)
     setError(null)
     if (fileRef.current) fileRef.current.value = ""
   }
+
+  const rejected = result ? Math.max(0, result.row_count - result.imported - result.duplicates) : 0
 
   return (
     <div className="space-y-4">
@@ -130,8 +194,68 @@ export default function Prospect() {
             analyzes the data and shows where revenue is leaking. CSV first; no integrations needed.
           </p>
         </div>
-        <SimulatedTag>Imported data stays in this environment</SimulatedTag>
+        <div className="flex flex-col items-start gap-1.5 sm:items-end">
+          <span
+            className={`chip ${
+              workspace === "prospect"
+                ? "border-brass-600/50 bg-brass-950/70 text-brass-300"
+                : "border-ink-700 bg-ink-850 text-mist-400"
+            }`}
+          >
+            {WORKSPACE_LABEL[workspace ?? "demo"]}
+          </span>
+          <span className="text-[11px] text-mist-500">Imported data stays in this environment</span>
+        </div>
       </div>
+
+      {/* Step 0: enter a clean prospect workspace (demo and prospect stay separate) */}
+      {workspace === "demo" ? (
+        <Section
+          title="0 · Start a prospect workspace"
+          subtitle="Demo and prospect data stay in separate modes — start a clean workspace for this company's real data"
+        >
+          <div className="space-y-3 px-4 py-4 sm:px-5">
+            <p className="max-w-2xl text-xs leading-relaxed text-mist-400">
+              This environment currently holds the <strong className="text-mist-200">synthetic demo dataset</strong>. Starting a prospect
+              workspace clears that demo data (it can be restored with a demo reset later, from a demo workspace), removes the fictional
+              demo company identity, and locks demo reset — so imported prospect data can never be wiped by a demo reset.
+            </p>
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="block">
+                <span className="label">Prospect company name (shown on the audit)</span>
+                <input
+                  className="input mt-1.5 w-72 px-3 py-2 text-sm"
+                  value={companyName}
+                  onChange={(e) => setCompanyName(e.target.value)}
+                  placeholder="e.g. Reliable Air & Heat"
+                  maxLength={120}
+                />
+              </label>
+              <button className="btn-primary px-4 py-2 text-sm" onClick={startProspect} disabled={busy === "start"}>
+                {busy === "start" ? "Starting…" : "Start prospect workspace →"}
+              </button>
+            </div>
+          </div>
+        </Section>
+      ) : null}
+
+      {startNote ? (
+        <div className="rounded-lg border border-emerald-900/50 bg-emerald-950/30 px-4 py-3 text-sm text-emerald-200">{startNote}</div>
+      ) : null}
+
+      {workspace === "prospect" ? (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-ink-700 bg-ink-900 px-4 py-2.5 text-xs text-mist-300">
+          <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-brass-400">Audit company</span>
+          <input
+            className="input w-64 px-2 py-1 text-xs"
+            value={companyName}
+            onChange={(e) => setCompanyName(e.target.value)}
+            onBlur={() => companyName.trim() && renameCompany(companyName)}
+            maxLength={120}
+          />
+          <span className="text-mist-500">— appears on the Revenue Recovery Audit document.</span>
+        </div>
+      ) : null}
 
       {/* Step 1: what are we importing */}
       <Section title="1 · What are you importing?" subtitle="Pick the kind of data, then upload a CSV export">
@@ -160,24 +284,56 @@ export default function Prospect() {
             className="hidden"
             onChange={(e) => onFile(e.target.files?.[0] ?? null)}
           />
-          <button className="btn-primary px-5 py-2.5 text-sm" onClick={() => fileRef.current?.click()} disabled={busy === "preview"}>
+          <button
+            className="btn-primary px-5 py-2.5 text-sm"
+            onClick={() => fileRef.current?.click()}
+            disabled={busy === "preview" || workspace === "demo"}
+          >
             {busy === "preview" ? "Analyzing…" : "⬆ Upload CSV"}
           </button>
-          {filename && !done ? <span className="ml-3 text-xs text-mist-400">{filename}</span> : null}
-          <span className="ml-3 text-[11px] text-mist-500">Headers are auto-mapped; you can fix them next.</span>
+          {filename && !result ? <span className="ml-3 text-xs text-mist-400">{filename}</span> : null}
+          <span className="ml-3 text-[11px] text-mist-500">
+            {workspace === "demo"
+              ? "Start the prospect workspace (step 0) first — demo and prospect data stay separate."
+              : "Headers are auto-mapped; you can fix them next."}
+          </span>
         </div>
       </Section>
 
       {error ? <div className="rounded-lg border border-red-900/60 bg-red-950/30 px-4 py-3 text-sm text-red-300">{error}</div> : null}
-      {done ? (
-        <div className="rounded-lg border border-emerald-900/50 bg-emerald-950/30 px-4 py-3 text-sm text-emerald-200">
-          {done}{" "}
-          <button className="ml-2 font-semibold underline underline-offset-2" onClick={() => nav("/audit")}>
-            View the audit →
-          </button>{" "}
-          <button className="ml-2 font-semibold underline underline-offset-2" onClick={() => nav("/opportunities")}>
-            Open the pipeline →
-          </button>
+      {result ? (
+        <div className="rounded-lg border border-emerald-900/50 bg-emerald-950/30 px-4 py-3.5 text-sm text-emerald-200">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5">
+            <span>
+              <strong className="metric-display text-base text-emerald-100">{result.row_count}</strong> rows read
+            </span>
+            <span>
+              <strong className="metric-display text-base text-emerald-100">{result.imported}</strong> imported
+            </span>
+            <span>
+              <strong className="metric-display text-base text-emerald-100">{result.duplicates}</strong> duplicates skipped{" "}
+              <span className="text-[11px] text-emerald-400/80">(rule: {result.duplicate_rule})</span>
+            </span>
+            <span>
+              <strong className="metric-display text-base text-emerald-100">{rejected}</strong> rejected
+            </span>
+          </div>
+          {result.errors.length > 0 ? (
+            <ul className="mt-2 space-y-0.5 border-t border-emerald-900/40 pt-2 text-[11px] text-emerald-300/90">
+              {result.errors.map((e, i) => (
+                <li key={i}>• {e}</li>
+              ))}
+            </ul>
+          ) : null}
+          <div className="mt-2 text-[11px] text-emerald-400/90">
+            No row was silently discarded. Run a sync on the Recovery Pipeline to materialize opportunities from this data.{" "}
+            <button className="font-semibold underline underline-offset-2" onClick={() => nav("/audit")}>
+              View the audit →
+            </button>{" "}
+            <button className="font-semibold underline underline-offset-2" onClick={() => nav("/opportunities")}>
+              Open the pipeline →
+            </button>
+          </div>
         </div>
       ) : null}
 

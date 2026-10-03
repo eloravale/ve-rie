@@ -4,6 +4,7 @@ import { nav } from "../App"
 import { usd, usdCompact, relTime } from "../format"
 import { Section, Loading, ErrorState, EmptyState } from "../ui"
 import { ScoreInstrument } from "../brand"
+import { useSettings } from "../use-settings"
 
 interface BriefAction {
   rank: number
@@ -106,6 +107,7 @@ const KIND_ICON: Record<string, string> = {
 }
 
 export default function Dashboard() {
+  const { workspace_kind: workspaceKind } = useSettings()
   const [data, setData] = useState<DashboardData | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [score, setScore] = useState<RecoveryScoreData | null>(null)
@@ -159,8 +161,19 @@ export default function Dashboard() {
             {data.company.city}, {data.company.state} · {brief.date}
           </p>
         </div>
-        <div className="flex flex-col items-start gap-1.5 sm:items-end">
-          <span className="chip border-plum-300/40 bg-plum-950/60 text-plum-300">Demo environment — all values illustrative</span>
+        <div className="flex flex-col items-start gap-2 sm:items-end">
+          <span
+            className={`chip ${
+              workspaceKind === "prospect"
+                ? "border-brass-600/50 bg-brass-950/70 text-brass-300"
+                : "border-plum-300/40 bg-plum-950/60 text-plum-300"
+            }`}
+          >
+            {workspaceKind === "prospect" ? "Imported prospect data" : "Demo environment — all values illustrative"}
+          </span>
+          <button className="btn-primary px-4 py-2 text-xs" onClick={() => nav("/audit")}>
+            ▶ Run Revenue Recovery Audit
+          </button>
           <span className="text-[10px] uppercase tracking-[0.14em] text-mist-500">Figures update from your records</span>
         </div>
       </div>

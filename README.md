@@ -61,15 +61,33 @@ assumed, owner-recorded outcomes are labelled recorded (see
 The seeded workspace is a **sync fixed point**: running opportunity sync on a
 fresh reset creates exactly zero new opportunities.
 
+Prospect Mode & the Revenue Recovery Audit
+------------------------------------------
+
+`POST /api/prospect/start` switches the workspace from synthetic demo data to a
+**clean prospect workspace** for imported CSV data: demo rows are cleared, the
+fictional company identity is removed (supply `company_name`), and
+`workspace_kind` becomes `prospect` — so demo reset is thereafter refused and
+imported prospect data can never be wiped. CSV imports for leads / calls /
+quotes / customers reuse the existing mapping + duplicate detection and report
+rows read, imported, duplicates skipped and rejected (with reasons).
+
+The **Revenue Recovery Audit** (`GET /api/audit`, screen *Revenue Audit*) shows
+data sources, leakage categories, ranked priority actions, and keeps
+**identified recovery opportunity** strictly separate from **recorded recovered
+revenue** (canonical ledger, with basis labels). It exports as a branded
+standalone HTML document (or Print/PDF) including the methodology note and the
+disclaimer: *"Identified recovery opportunities are not guaranteed revenue."*
+
 Workspace safety & configuration
 --------------------------------
 
 - Each workspace records its kind (`demo` / `prospect` / `customer`, see
   `GET /api/workspace`). Demo reset is **refused with HTTP 409** on non-demo
   workspaces — customer data can never be wiped by a demo reset.
-- `POST /api/demo/reset` and `POST /api/data/delete` require the admin token
-  (header `x-admin-token`) whenever `VERIA_ADMIN_TOKEN` is configured, or when
-  `VERIA_PROTECTED_MODE=1` (fail-closed).
+- `POST /api/demo/reset`, `POST /api/data/delete` and `POST /api/prospect/start`
+  require the admin token (header `x-admin-token`) whenever `VERIA_ADMIN_TOKEN`
+  is configured, or when `VERIA_PROTECTED_MODE=1` (fail-closed).
 - CORS is allowlist-based: localhost dev origins work out of the box; set
   `VERIA_ALLOWED_ORIGINS=https://app.yourdomain.com` in production.
 - Secrets live in the environment (`VERIA_ADMIN_TOKEN`) — never in the repo.

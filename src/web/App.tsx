@@ -33,6 +33,7 @@ export interface Company {
 const NAV: { group?: string; path?: string; label?: string; icon?: string }[] = [
   { group: "Overview" },
   { path: "/", label: "Dashboard", icon: "◫" },
+  { path: "/audit", label: "Revenue Audit", icon: "◆" },
   { group: "Intelligence" },
   { path: "/found", label: "What We Found", icon: "◈" },
   { path: "/radar", label: "Revenue Radar", icon: "◎" },

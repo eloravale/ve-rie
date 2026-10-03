@@ -1,8 +1,39 @@
-import React from "react"
+import React, { useEffect, useState } from "react"
 import { nav } from "../App"
+import { api } from "../api"
+import { usd } from "../format"
 import { SectionIndex, DiamondRule, RecoveryNetwork, ScoreInstrument, StageRail } from "../brand"
 
 const PRIMARY_CTA = "GET YOUR FREE REVENUE RECOVERY AUDIT"
+const SECONDARY_CTA = "SEE HOW IT WORKS"
+
+/** Live figures from the canonical sources — never hardcoded, never invented. */
+function useLiveImpact() {
+  const [live, setLive] = useState<{
+    identified_value: number
+    recovered_value: number
+    recovery_rate: number
+    recorded: number
+    assumed: number
+  } | null>(null)
+  useEffect(() => {
+    Promise.all([
+      api.get<{ identified_value: number; recovered_value: number; recovery_rate: number }>("/api/impact"),
+      api.get<{ revenue_recovered_basis?: { recorded?: number; assumed?: number } }>("/api/dashboard")
+    ])
+      .then(([imp, dash]) =>
+        setLive({
+          identified_value: imp.identified_value,
+          recovered_value: imp.recovered_value,
+          recovery_rate: imp.recovery_rate,
+          recorded: dash.revenue_recovered_basis?.recorded ?? 0,
+          assumed: dash.revenue_recovered_basis?.assumed ?? 0
+        })
+      )
+      .catch(() => setLive(null))
+  }, [])
+  return live
+}
 
 function LandingNav() {
   const go = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth" })
@@ -16,6 +47,7 @@ function LandingNav() {
           <button className={item} onClick={() => go("system")}>How it works</button>
           <button className={item} onClick={() => go("audit")}>Audit</button>
           <button className={item} onClick={() => go("impact")}>Impact</button>
+          <button className={item} onClick={() => go("faq")}>FAQ</button>
         </nav>
         <button className="btn-primary px-4 py-2 text-[11px]" onClick={() => nav("/prospect")}>
           Get your free audit
@@ -26,6 +58,26 @@ function LandingNav() {
 }
 
 export default function Landing() {
+  const live = useLiveImpact()
+  const impactStats = live
+    ? [
+        {
+          v: usd(live.recovered_value),
+          l: "Recovered revenue",
+          d: `canonical ledger — ${usd(live.recorded)} recorded · ${usd(live.assumed)} assumed (illustrative demo dataset)`
+        },
+        {
+          v: usd(live.identified_value),
+          l: "Identified opportunity",
+          d: "labelled as opportunity, never as guaranteed revenue"
+        },
+        {
+          v: `${Math.round(live.recovery_rate * 100)}%`,
+          l: "Recovery rate on actioned work",
+          d: "from the illustrative demo dataset"
+        }
+      ]
+    : null
   return (
     <div className="min-h-screen bg-ink-950 text-mist-100">
       <LandingNav />
@@ -44,15 +96,15 @@ export default function Landing() {
             <span className="italic text-brass-400">you're already losing.</span>
           </h1>
           <p className="mt-6 max-w-2xl text-base leading-relaxed text-mist-300 sm:text-lg">
-            VÉRIA analyzes your existing business data to identify revenue leakage, prioritize recovery opportunities, help your
-            team act, and measure what actually comes back.
+            VÉRIA finds missed enquiries, stale leads, unclosed quotes and dormant customers — then turns them into prioritized
+            recovery actions.
           </p>
           <div className="mt-8 flex flex-wrap items-center gap-3">
             <button className="btn-primary px-6 py-3" onClick={() => nav("/prospect")}>
               {PRIMARY_CTA}
             </button>
             <button className="btn-secondary px-6 py-3" onClick={() => document.getElementById("system")?.scrollIntoView({ behavior: "smooth" })}>
-              See how it works
+              {SECONDARY_CTA}
             </button>
           </div>
           <div className="mt-3 text-[10px] uppercase tracking-[0.16em] text-mist-500">
@@ -200,11 +252,11 @@ export default function Landing() {
           Measured outcomes, not marketing numbers.
         </h2>
         <div className="mt-10 grid grid-cols-1 gap-px border border-ink-800 bg-ink-800 sm:grid-cols-3">
-          {[
-            { v: "$22,400", l: "Recovered revenue", d: "recorded outcomes only — booked jobs, accepted quotes, reactivated customers" },
-            { v: "$119,650", l: "Identified opportunity", d: "labelled as opportunity, never as guaranteed revenue" },
-            { v: "75%", l: "Recovery rate on actioned work", d: "from the illustrative demo dataset" }
-          ].map((s) => (
+          {(impactStats ?? [
+            { v: "—", l: "Recovered revenue", d: "canonical ledger, loaded from the live environment" },
+            { v: "—", l: "Identified opportunity", d: "labelled as opportunity, never as guaranteed revenue" },
+            { v: "—", l: "Recovery rate on actioned work", d: "from the illustrative demo dataset" }
+          ]).map((s) => (
             <div key={s.l} className="bg-ink-950 p-6 sm:p-8">
               <div className="metric-display text-4xl text-mist-50 sm:text-5xl">{s.v}</div>
               <div className="mt-3 text-[11px] font-bold uppercase tracking-[0.18em] text-brass-300">{s.l}</div>
@@ -212,7 +264,9 @@ export default function Landing() {
             </div>
           ))}
         </div>
-        <p className="mt-4 text-[10px] uppercase tracking-[0.16em] text-mist-500">Illustrative demo data — not a customer result.</p>
+        <p className="mt-4 text-[10px] uppercase tracking-[0.16em] text-mist-500">
+          {impactStats ? "Loaded live from the demo environment's canonical ledger — illustrative demo data, not a customer result." : "Illustrative demo data — not a customer result."}
+        </p>
       </section>
 
       {/* ================= 06 THE PRODUCT ================= */}
@@ -276,7 +330,47 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ================= 08 CTA ================= */}
+      {/* ================= 08 FAQ ================= */}
+      <section id="faq" className="border-y border-ink-800 bg-ink-900/50">
+        <div className="mx-auto max-w-6xl px-5 py-16 sm:px-8 sm:py-20">
+          <SectionIndex index="08">FAQ</SectionIndex>
+          <div className="mt-8 divide-y divide-ink-800 border-t border-ink-800">
+            {[
+              {
+                q: "What data do I need?",
+                a: "CSV exports you already have — a leads list, a call log, estimates, a customer list. VÉRIA maps the columns, analyzes what's there, and builds the audit from your records. No integrations to buy."
+              },
+              {
+                q: "Is the identified number guaranteed revenue?",
+                a: "No. Identified recovery opportunities are not guaranteed revenue — they are opportunities found in your data, labelled as such. Recovered revenue is a separate number, reported only from recorded outcomes in the canonical ledger, with its value basis (recorded, assumed or analytical) shown."
+              },
+              {
+                q: "Does VÉRIA contact my customers for me?",
+                a: "No. VÉRIA never messages a customer on its own. It surfaces the opportunity, the value and a recommended action — a person decides what gets sent, and only real outcomes count as recovered."
+              },
+              {
+                q: "Do I have to replace my CRM or phone system?",
+                a: "No. VÉRIA works above the systems you already use — it reads the exports those systems already produce and finds the revenue stalling between them."
+              },
+              {
+                q: "What's in the Revenue Recovery Audit?",
+                a: "Your data sources and analysis period, missed and slow enquiries, open and overdue quotes, dormant customers, the identified recovery opportunity by category, ranked top actions with recommended next steps, a methodology note, and recorded recovered revenue kept clearly separate."
+              },
+              {
+                q: "What's the difference between demo and prospect mode?",
+                a: "Demo mode runs on a synthetic, clearly labelled dataset so you can see the workflow in minutes. Prospect mode runs on your own imported data in a separate workspace, labelled as imported prospect data — demo reset cannot touch it."
+              }
+            ].map((f) => (
+              <div key={f.q} className="grid gap-2 py-6 md:grid-cols-[1fr_1.4fr] md:gap-10">
+                <div className="text-sm font-bold text-mist-100">{f.q}</div>
+                <p className="text-sm leading-relaxed text-mist-300">{f.a}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ================= 09 CTA ================= */}
       <section className="blueprint-grid relative overflow-hidden border-t border-ink-800">
         <div className="motif-field pointer-events-none absolute -left-20 bottom-0 h-72 w-72 opacity-[0.14]" aria-hidden="true" />
         <div className="relative mx-auto max-w-3xl px-5 py-20 text-center sm:px-8">

@@ -16,6 +16,7 @@ import { ValidationError } from "./validation"
 import { money } from "./region"
 import { classifyJobType } from "./jobTypes"
 import { recordRecovered, ledgerRecoveredSummary } from "./ledger"
+import { getWorkspaceKind } from "./demo"
 
 export const DAY = 86_400_000
 
@@ -692,9 +693,13 @@ export interface RecoveryScore {
 
 export interface AuditDoc {
   company: { name: string; city: string; state: string; region: string; currency: string }
+  /** What the underlying data IS (demo / prospect / customer) — drives labelling. */
+  workspace_kind: "demo" | "prospect" | "customer"
   period_days: number
   generated_at: string
   data_basis: string
+  /** Every data source the audit actually read, with scope and row counts. */
+  data_sources: { source: string; scope: string; count: number }[]
   enquiries: number
   missed_unanswered: number
   slow_responses: number
@@ -711,7 +716,24 @@ export interface AuditDoc {
     other: number
     total: number
   }
-  top_actions: { rank: number; title: string; customer: string; value: number; why: string; recommended_action: string }[]
+  top_actions: {
+    rank: number
+    title: string
+    customer: string
+    value: number
+    why: string
+    recommended_action: string
+    age_days: number
+    priority: string
+    stage: string
+  }[]
+  /** RECORDED recovered revenue from the canonical ledger — never the same
+   *  number as `opportunity` (which is identified, unguaranteed value). */
+  recovered: {
+    value: number
+    events: number
+    by_basis: { opportunity: number; recorded: number; assumed: number; analytical: number }
+  }
   score: RecoveryScore
   disclaimer: string
 }
@@ -976,15 +998,52 @@ export async function buildAudit(db: Database, periodDays = 90): Promise<AuditDo
   const known = new Set(["missed_call", "quote", "dormant_customer", "slow_response"])
   const other = categories.filter((c) => !known.has(c.source_type)).reduce((s, c) => s + c.value, 0)
 
+  // Data sources actually read for this audit (spec §1: named, never invented).
+  const leadsRes = await db
+    .prepare(`SELECT COUNT(*) AS n FROM leads WHERE company_id = ?1`)
+    .bind(COMPANY_ID)
+    .first<{ n: number }>()
+  const customersRes = await db
+    .prepare(`SELECT COUNT(*) AS n FROM customers WHERE company_id = ?1`)
+    .bind(COMPANY_ID)
+    .first<{ n: number }>()
+  const missedAllRes = await db
+    .prepare(`SELECT COUNT(*) AS n FROM missed_calls WHERE company_id = ?1`)
+    .bind(COMPANY_ID)
+    .first<{ n: number }>()
+  const dataSources = [
+    { source: "Enquiries", scope: `last ${periodDays} days`, count: enquiries.length },
+    { source: "Missed calls", scope: "all recorded", count: missedAllRes?.n ?? 0 },
+    { source: "Quotes / estimates", scope: "open", count: quotesRes?.n ?? 0 },
+    { source: "Leads", scope: "all records", count: leadsRes?.n ?? 0 },
+    { source: "Customers", scope: "all records", count: customersRes?.n ?? 0 }
+  ]
+
+  // RECORDED recovered revenue — canonical ledger, clearly separate from the
+  // identified opportunity above. Same source of truth as dashboard + impact.
+  const ledger = await ledgerRecoveredSummary(db)
+  const workspaceKind = await getWorkspaceKind(db)
+
+  // Priority hierarchy (spec §2): existing per-opportunity priority first,
+  // then value — deterministic, explainable, no new score invented.
+  const PRIORITY_RANK: Record<string, number> = { high: 0, medium: 1, low: 2 }
   const opps = (await listOpportunities(db)).filter((o) => o.stage !== "recovered" && o.stage !== "lost")
-  opps.sort((a, b) => b.estimated_value - a.estimated_value || a.age_days - b.age_days)
+  opps.sort(
+    (a, b) =>
+      (PRIORITY_RANK[a.priority] ?? 3) - (PRIORITY_RANK[b.priority] ?? 3) ||
+      b.estimated_value - a.estimated_value ||
+      b.age_days - a.age_days
+  )
   const topActions = opps.slice(0, 5).map((o, i) => ({
     rank: i + 1,
     title: o.title,
     customer: o.customer_name,
     value: o.estimated_value,
     why: o.why,
-    recommended_action: o.recommended_action
+    recommended_action: o.recommended_action,
+    age_days: o.age_days,
+    priority: o.priority,
+    stage: o.stage
   }))
 
   const score = await computeRecoveryScore(db, now)
@@ -999,9 +1058,11 @@ export async function buildAudit(db: Database, periodDays = 90): Promise<AuditDo
       region: String(company.region ?? "us"),
       currency
     },
+    workspace_kind: workspaceKind,
     period_days: periodDays,
     generated_at: nowIso(),
     data_basis: `Analysis covers the last ${periodDays} days of enquiries, calls, quotes and customer records available in VÉRIA.`,
+    data_sources: dataSources,
     enquiries: enquiries.length,
     missed_unanswered: missedRes?.n ?? 0,
     slow_responses: health.buckets.filter((b) => ["30to120", "over120"].includes(b.key)).reduce((s, b) => s + b.count, 0),
@@ -1019,9 +1080,14 @@ export async function buildAudit(db: Database, periodDays = 90): Promise<AuditDo
       total: categories.reduce((s, c) => s + c.value, 0)
     },
     top_actions: topActions,
+    recovered: {
+      value: ledger.recovered_revenue,
+      events: ledger.recovered_events,
+      by_basis: ledger.by_basis
+    },
     score,
     disclaimer:
-      "These are opportunities identified from the available data — NOT guaranteed revenue. Values are estimates based on recorded job values and typical recovery actions. Illustrative figures for demonstration data."
+      "Identified recovery opportunities are not guaranteed revenue. These are opportunities identified from the available data — NOT guaranteed revenue. Values are estimates based on recorded job values and typical recovery actions. Recovered revenue is reported separately and only from the canonical ledger."
   }
 }
 

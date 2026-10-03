@@ -13,6 +13,8 @@ export interface Settings {
   date_format: DateFormatCode
   retention_days: number
   data_source: string | null
+  /** What the data in this workspace IS — drives demo vs prospect labelling. */
+  workspace_kind?: "demo" | "prospect" | "customer"
 }
 
 export const DEFAULT_SETTINGS: Settings = {

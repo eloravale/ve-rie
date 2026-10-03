@@ -53,6 +53,28 @@ export default function DemoMode() {
   const buildSteps = useCallback((): StepState[] => {
     return [
       {
+        id: "audit",
+        chapter: "1 · LEAK",
+        title: "Revenue Recovery Audit — the whole leak in one document",
+        why: "The audit answers one question first: where might this company be leaving recoverable opportunities unworked? Data sources, leakage by category, the top five actions — with identified opportunity and recorded recovered revenue kept clearly separate.",
+        action: "Compile the audit",
+        goTo: "/audit",
+        run: async () => {
+          const a = await api.get<{
+            company: { name: string }
+            opportunity: { total: number }
+            recovered: { value: number; events: number }
+            top_actions: { rank: number; title: string }[]
+            missed_unanswered: number
+            overdue_quotes: number
+          }>("/api/audit?days=90")
+          const top = a.top_actions[0]
+          return `Audit for ${a.company.name}: ${usd(a.opportunity.total)} identified opportunity across missed calls, stale quotes and dormant customers; ${usd(a.recovered.value)} recovered recorded in the ledger (${a.recovered.events} events). ${
+            top ? `Priority #1: ${top.title}.` : ""
+          }`
+        }
+      },
+      {
         id: "leak",
         chapter: "1 · LEAK",
         title: "See where revenue is leaking",
@@ -97,6 +119,38 @@ export default function DemoMode() {
             { stage: nextStage(use.stage) }
           )
           return `${res.opportunity.customer_name} moved to ${res.opportunity.stage.replace(/_/g, " ")} — ${usd(use.estimated_value)} still in play. Next: ${use.recommended_action}`
+        }
+      },
+      {
+        id: "missed",
+        chapter: "3 · RECOVER",
+        title: "Missed enquiry recovery — call the job back",
+        why: "The phone rang during another job. Recovering a missed call creates the lead, the owner callback task and an audit trail — the fastest money in HVAC.",
+        action: "Recover a missed call",
+        goTo: "/missed-calls",
+        run: async () => {
+          const list = await api.get<
+            Array<{ id: string; caller_name: string | null; caller_phone: string; estimated_value: number; recovered: number }>
+          >("/api/missed-calls")
+          const target = (list ?? []).find((m) => !m.recovered)
+          if (!target) return "No open missed calls — reset the demo to replay this step."
+          await api.post(`/api/missed-calls/${target.id}/recover`)
+          return `${target.caller_name ?? target.caller_phone}: callback task created for ${usd(target.estimated_value)} of potential work — nothing sent automatically.`
+        }
+      },
+      {
+        id: "dormant",
+        chapter: "3 · RECOVER",
+        title: "Dormant customer reactivation — the base you already paid for",
+        why: "Past customers idle 30+ days become a prioritized reactivation with a value and an owner task. The owner decides who gets the call.",
+        action: "Queue a reactivation",
+        goTo: "/reactivation",
+        run: async () => {
+          const list = await api.get<Array<{ id: string; lead_name: string; status: string; estimated_value: number }>>("/api/reactivations")
+          const target = (list ?? []).find((r) => r.status === "identified")
+          if (!target) return "No identified reactivations — reset the demo to replay this step."
+          await api.post(`/api/reactivations/${target.id}/run`)
+          return `Reactivation queued for ${target.lead_name} (${usd(target.estimated_value)} estimated value) — owner outreach task created, nothing sent automatically.`
         }
       },
       {
@@ -187,7 +241,8 @@ export default function DemoMode() {
           <SectionIndex index="—">The recovery story</SectionIndex>
           <h1 className="font-display mt-2 text-3xl font-medium leading-tight text-mist-50 sm:text-4xl">Demo Mode.</h1>
           <p className="mt-2 max-w-2xl text-sm leading-relaxed text-mist-300">
-            LEAK → IDENTIFY → PRIORITIZE → RECOVER → MEASURE. Run the steps in order for the 5-minute walkthrough.
+            LEAK → IDENTIFY → PRIORITIZE → RECOVER → MEASURE. Run the eight steps in order for the 5–10 minute walkthrough:
+            audit, leakage, priorities, quote recovery, missed enquiry, reactivation, handoff, measured impact.
             Reset any time for a fresh demo. <span className="font-semibold text-brass-300">Illustrative demo data.</span>
           </p>
         </div>

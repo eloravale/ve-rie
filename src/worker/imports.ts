@@ -518,6 +518,7 @@ export async function updateSettings(db: Database, body: Record<string, unknown>
   const dateFormat = typeof body.date_format === "string" && ["MDY", "DMY"].includes(body.date_format) ? body.date_format : current.date_format
   const retention = typeof body.retention_days === "number" && body.retention_days >= 30 && body.retention_days <= 3650 ? Math.round(body.retention_days) : current.retention_days
   const dataSource = typeof body.data_source === "string" ? body.data_source.slice(0, 500) : current.data_source
+  const companyName = typeof body.company_name === "string" ? body.company_name.trim().slice(0, 120) : null
 
   const existing = await db.prepare(`SELECT company_id FROM company_settings WHERE company_id = ?1`).bind(COMPANY_ID).first()
   const now = nowIso()
@@ -531,6 +532,9 @@ export async function updateSettings(db: Database, body: Record<string, unknown>
       .prepare(`INSERT INTO company_settings (company_id, region, currency, date_format, retention_days, data_source, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?7)`)
       .bind(COMPANY_ID, region, currency, dateFormat, retention, dataSource, now)
       .run()
+  }
+  if (companyName) {
+    await db.prepare(`UPDATE companies SET name = ?2, updated_at = ?3 WHERE id = ?1`).bind(COMPANY_ID, companyName, now).run()
   }
   await audit(db, { actor: "owner", entityType: "system", action: "settings_updated", detail: `Region ${region}, currency ${currency}, date format ${dateFormat}.` })
   return getSettings(db)

@@ -20,9 +20,11 @@ Read this from your phone. Everything below works on the live demo — no prepar
 
 1. **Open the live URL** (bookmark it on your phone home screen).
 2. **Dashboard** — point at the two headline numbers:
-   - *Revenue recovered: $22,400* ("this is money that came back — the ledger
-     shows $16,000 we assumed from estimates and $6,400 recorded outcomes")
-   - *Revenue at risk: $44,740* ("this is money walking out the door right now")
+   - *Revenue recovered: $22,400* ("this comes from one canonical ledger —
+     three historical recoveries on **assumed** basis, labelled as such on
+     screen; $0 is recorded until someone records a real outcome")
+   - *Revenue at risk: $44,740* ("this is identified opportunity walking out
+     the door right now — not lost revenue, not a forecast")
    - Say: "Everything on this screen comes from one question — what is this business losing, and why?"
 3. **Owner Daily Brief** (same page) — "Every morning the owner gets five ranked actions with dollar values. This is the whole product in one card."
 4. **Tap Lost-Revenue Radar** — scroll the list: missed calls, unanswered leads, idle estimates, dormant leads. "Each one has a value, an urgency, and the recommended action."
@@ -35,7 +37,7 @@ Close: "This is exactly what VÉRIA would watch for your company. Want me to run
 
 ## 4. 5-minute demo script
 
-**Minute 1 — the pain.** On the dashboard: "The average HVAC company misses 10–15% of inbound calls, lets a third of web leads go cold, and follows up on estimates less than twice. Each one feels small. Together, for a company this size, it's **$44,740 sitting in this red number**."
+**Minute 1 — the pain.** On the dashboard: "Missed calls, cold web leads, unfollowed estimates, silent customers — each one feels small. In this company's own records, together, it's **$44,740 sitting in this red number**. No industry averages — this is their data." (Never quote industry statistics; the numbers on screen come from the workspace's records.)
 
 **Minute 2 — the radar.** Open **Lost-Revenue Radar**. Walk 2–3 items top to bottom:
 - "Irene Castillo called six days ago, nobody called back — **$4,800** probably already booked with a competitor."
@@ -46,21 +48,31 @@ Close: "This is exactly what VÉRIA would watch for your company. Want me to run
 
 **Minute 4 — recovery in action.** Go to **Missed-Call Recovery**. Tap **Start recovery** on the top call. Show what appears: a lead is created, an owner call-back task appears, the audit trail records it. "Notice — VÉRIA doesn't pretend to be autonomous. Anything personal goes to the owner as a task with a value and a priority. That's deliberate: homeowners want a human to call them back."
 
-**Minute 5 — the money.** Open **Demo Mode** and run the guided steps, or just return to the dashboard. "Recovered $22,400, at-risk $44,740. In a real deployment, this dashboard watches your phone line, your web forms, and your estimate list 24/7. The average customer we model recovers $2–6k/month. What would that be worth at your volume?"
+**Minute 5 — the money.** Open **Demo Mode** and run the eight guided steps (audit → leakage → priorities → quote recovery → missed enquiry → reactivation → handoff → measured impact), or just return to the dashboard. "Recovered $22,400 — shown with its basis, assumed vs recorded — against $44,740 of identified opportunity. In a real deployment this watches your phone line, your web forms and your estimate list 24/7. What would it be worth at your volume if we recovered even a quarter of your red number?" (Ask — never claim a recovery rate the data doesn't support.)
 
 ---
 
 ## 5. Revenue Recovery Audit (the offer to sell)
 
-Frame the first engagement as a **Revenue Recovery Audit** — VÉRIA analyzes the prospect's own numbers and returns a report:
+The **Revenue Recovery Audit** is a real screen in the app (sidebar: *Revenue Audit*, or the
+**▶ Run Revenue Recovery Audit** button on the dashboard). It shows:
 
-- calls missed last month (with estimated job value)
-- web leads that never got a first response
-- estimates older than 7 days with no recorded follow-up
-- dormant past customers with open intent
-- **a dollar range of recoverable revenue**
+- company, analysis period, and the data sources actually read
+- missed/unanswered enquiries, slow responses, open & overdue quotes, dormant customers
+- **identified recovery opportunity** by category — labelled "not guaranteed revenue"
+- **recorded recovered revenue** from the canonical ledger, with basis (recorded/assumed)
+- top five ranked actions: priority, age, status, why it matters, recommended next step
+- methodology note + the disclaimer: *"Identified recovery opportunities are not guaranteed revenue."*
 
-The demo environment IS the sample audit. The close: "Imagine this dashboard filled with your company's numbers. The audit takes two weeks and the findings are guaranteed or it's free."
+**Export:** *Download audit* produces a branded standalone HTML file (or *Print / Save PDF*) —
+same numbers, same disclaimer, ready to send.
+
+**Prospect Mode (their real numbers):** open *Prospect mode* → step 0 **Start prospect workspace**
+(enter the prospect's company name — demo data is cleared and demo reset locks, so their data
+can never be wiped) → upload their leads/calls/quotes/customers CSVs → the audit regenerates from
+their data, labelled **Imported prospect data**.
+
+The demo environment IS the sample audit. The close: "Imagine this filled with your company's numbers."
 
 ---
 
@@ -90,14 +102,20 @@ The demo environment IS the sample audit. The close: "Imagine this dashboard fil
 
 ## 8. Exact demo flow (bookmark order)
 
-1. Dashboard (headline metrics + Owner Daily Brief)
-2. Radar (2–3 items)
-3. One lead detail (score breakdown + workflow strip)
-4. Missed Calls → Start recovery
-5. Tasks (owner handoff completed)
-6. Dashboard again (recovered number moved)
-7. Demo Mode → Reset before the NEXT prospect (one tap — reset is refused on
-   non-demo workspaces, so it can never touch a pilot customer's data)
+**LEAK → IDENTIFY → PRIORITIZE → RECOVER → MEASURE** (the Demo Mode screen walks these
+in order, ~5–10 minutes):
+
+1. **Revenue Recovery Audit** — the whole leak in one document (data sources, categories, top 5 actions)
+2. **Revenue Leakage** — Where We Found It, with values per category
+3. **Highest-priority opportunity** — the pipeline ranked by priority, then value
+4. **Quote recovery** — advance a quote opportunity (this is also the status change)
+5. **Missed enquiry recovery** — recover a missed call → lead + owner task
+6. **Dormant customer reactivation** → owner outreach task queued
+7. **Human handoff** — owner task completed, nothing sent autonomously
+8. **Recovery/impact view** — the measured result from the canonical ledger
+
+Before the NEXT prospect: **Demo Mode → Reset** (one tap — refused with 409 on
+non-demo workspaces, so it can never touch prospect data).
 
 ---
 
